@@ -1,0 +1,31 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck -S warning lite-vps-ops bootstrap.sh lib/*.sh tests/*.sh scripts/*.sh
+      - name: Bash syntax and unit
+        run: bash tests/run.sh
+  debian-13-audit:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install smoke dependencies
+        run: apt-get update && apt-get install -y --no-install-recommends bash coreutils findutils procps systemd
+      - name: Platform boundary
+        run: |
+          bash -n lite-vps-ops bootstrap.sh lib/core.sh
+          if ./lite-vps-ops audit 2>&1 | grep -Fq 'systemd is required'; then
+            echo 'SKIP: container has no booted systemd; audit/apply E2E requires disposable Debian 13 VM'
+          else
+            echo 'Unexpected audit outcome'; exit 1
+          fi
