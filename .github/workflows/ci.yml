@@ -30,6 +30,7 @@ jobs:
       - run: bash tests/fault-injection.sh
       - run: bash tests/dry-run.sh
       - run: bash tests/retention-lock.sh
+      - run: bash tests/bootstrap-cleanup.sh
 
   package:
     runs-on: ubuntu-latest

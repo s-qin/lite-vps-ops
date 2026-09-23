@@ -26,4 +26,4 @@ tar -tzf "$STAGING/$ASSET" | while IFS= read -r member; do
 done
 mkdir "$STAGING/run"
 tar -xzf "$STAGING/$ASSET" -C "$STAGING/run" --no-same-owner --no-same-permissions
-exec "$STAGING/run/lite-vps-ops" "$@"
+"$STAGING/run/lite-vps-ops" "$@"

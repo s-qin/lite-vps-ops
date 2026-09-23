@@ -19,7 +19,7 @@ $token = ([guid]::NewGuid().ToString('N'))
 $ready = "/run/lite-vps-ops/ssh-$token.ready"
 $proof = "/run/lite-vps-ops/ssh-$token.passed"
 $bootstrap = "https://github.com/s-qin/lite-vps-ops/releases/download/$Version/bootstrap.sh"
-$remote = "set -eu; d=`$(mktemp -d); trap 'rm -rf -- `"`$d`"' EXIT; curl -fL --proto '=https' --tlsv1.2 -o `"`$d/bootstrap.sh`" '$bootstrap'; sudo -n bash `"`$d/bootstrap.sh`" $Command --profile $Profile --ssh-blackbox-token $token"
+$remote = "set -eu; if ! command -v curl >/dev/null 2>&1; then sudo -n apt-get update; sudo -n apt-get install -y --no-install-recommends ca-certificates curl; fi; d=`$(mktemp -d); trap 'rm -rf -- `"`$d`"' EXIT; curl -fL --proto '=https' --tlsv1.2 -o `"`$d/bootstrap.sh`" '$bootstrap'; sudo -n bash `"`$d/bootstrap.sh`" $Command --profile $Profile --ssh-blackbox-token $token"
 
 $job = Start-Job -ScriptBlock {
     param($Alias, $RemoteCommand)
@@ -30,13 +30,14 @@ $job = Start-Job -ScriptBlock {
 $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 $proved = $false
 try {
-    while ((Get-Date) -lt $deadline -and $job.State -eq 'Running') {
+    while ((Get-Date) -lt $deadline) {
+        $job = Get-Job -Id $job.Id
+        if ($job.State -ne 'Running') { break }
         & ssh -o BatchMode=yes -o ConnectTimeout=10 $HostAlias "sudo -n test -f '$ready' && printf '%s\n' '$token' | sudo -n tee '$proof' >/dev/null"
         if ($LASTEXITCODE -eq 0) { $proved = $true; break }
         Start-Sleep -Seconds 1
-        $job = Get-Job -Id $job.Id
     }
-    if (-not $proved) { throw 'The independent SSH black-box connection did not reach the ready gate.' }
+    if (-not $proved -and $job.State -eq 'Running') { throw 'Timed out before the remote operation completed or reached the SSH ready gate.' }
     Receive-Job -Job $job -Wait
     if ($job.State -ne 'Completed') { throw "Remote job state: $($job.State)" }
     & ssh -o BatchMode=yes -o ConnectTimeout=10 $HostAlias 'true'
