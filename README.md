@@ -2,6 +2,8 @@
 
 [简体中文](README.zh-CN.md) · English
 
+[![CI](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml)
+
 Lite VPS Ops is a lightweight, idempotent node-baseline tool for small, long-lived **Debian 13 (Trixie)** VPS hosts. It provides system auditing, maintenance, SSH hardening, memory resilience, bounded logging, conservative kernel settings, transactional changes, and ongoing health checks.
 
 The current release is **v1.0.0**. The default command is the read-only `audit` command.
@@ -50,6 +52,16 @@ On failure, the transaction rolls back managed changes, restores captured runtim
 - Typical target size: 512 MiB to several GiB of RAM and 20–80 GiB of disk
 
 The Windows controller requires PowerShell and OpenSSH. Release installation requires outbound HTTPS access to GitHub.
+
+## Roadmap
+
+Current production support is limited to the systems listed above. Planned platform work includes:
+
+- Debian 12 (Bookworm)
+- Ubuntu 24.04 LTS
+- Additional Debian/Ubuntu-family distributions that fit the systemd + apt architecture, after dedicated adaptation and testing
+
+Planned platforms are not supported or validated by the current release.
 
 ## Installation
 
