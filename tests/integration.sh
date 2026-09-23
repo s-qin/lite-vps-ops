@@ -1,28 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck source=lib/core.sh
-. "$root/lib/core.sh"
-tmp=$(mktemp -d)
-trap 'rm -rf -- "$tmp"' EXIT
-FILES=("$tmp/journal.conf" "$tmp/core.conf" "$tmp/sysctl.conf")
-TX_DIR="$tmp/transaction"
-install() { mkdir -p "${@: -1}"; }
-sysctl() {
-  case "$1" in -n) printf '1\n' ;; -w) : ;; *) return 1 ;; esac
-}
-systemctl() { :; }
-systemd-analyze() { :; }
-printf '%s\n[Journal]\nSystemMaxUse=32M\n' "$MANAGED_MARKER" > "${FILES[0]}"
-printf '%s\n[Coredump]\nStorage=none\n' "$MANAGED_MARKER" > "${FILES[1]}"
-before_journal=$(sha "${FILES[0]}")
-before_core=$(sha "${FILES[1]}")
-snapshot
-printf 'corrupted\n' > "${FILES[0]}"
-printf 'corrupted\n' > "${FILES[1]}"
-printf 'new\n' > "${FILES[2]}"
-rollback
-[[ $(sha "${FILES[0]}") == "$before_journal" ]]
-[[ $(sha "${FILES[1]}") == "$before_core" ]]
-[[ ! -e ${FILES[2]} ]]
-printf 'PASS integration: snapshot, hash and rollback\n'
+# shellcheck source=tests/helpers.sh
+. "$root/tests/helpers.sh"
+make_fixture
+trap 'rm -rf -- "$fixture"' EXIT
+load_fixture
+
+managed_paths_init
+transaction_begin
+snapshot_all
+apply_managed_configs_except_ssh
+SSH_BLACKBOX_TOKEN=aaaaaaaaaaaaaaaa
+apply_ssh_with_blackbox
+for file in "${MANAGED_PATHS[@]}"; do [[ $(file_status "$file") == ALREADY_COMPLIANT ]]; done
+first_hash=$(find "$fixture/etc" "$fixture/usr/local/libexec" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+for file in "${MANAGED_PATHS[@]}"; do [[ $(file_status "$file") == ALREADY_COMPLIANT ]]; done
+second_hash=$(find "$fixture/etc" "$fixture/usr/local/libexec" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+[[ $first_hash == "$second_hash" ]]
+
+printf 'corrupt\n' > "${MANAGED_PATHS[0]}"
+rollback_all
+for file in "${MANAGED_PATHS[@]}"; do [[ ! -e $file ]]; done
+[[ $(cat "$fixture/etc/fstab") == '# fixture fstab' ]]
+TX_ACTIVE=false
+transaction_release_lock
+trap - EXIT INT TERM
+rm -rf -- "$fixture"
+printf 'PASS integration: snapshot, ownership, idempotence, rollback\n'

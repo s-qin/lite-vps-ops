@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=tests/helpers.sh
+. "$root/tests/helpers.sh"
+make_fixture
+trap 'rm -rf -- "$fixture"' EXIT
+load_fixture
+managed_paths_init
+transaction_begin
+snapshot_all
+apply_managed_configs_except_ssh
+SSH_BLACKBOX_TOKEN=aaaaaaaaaaaaaaaa
+apply_ssh_with_blackbox
+checks_reset
+add_check 0 os PASS true 'Debian 13'
+receipt_write PASS true
+python - "$TX_DIR/receipt.json" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text())
+assert d["schema_version"] == 1
+assert d["node_baseline_ready"] is True
+assert d["ssh_blackbox_verified"] is True
+assert d["checks"][0]["status"] == "PASS"
+PY
+TX_ACTIVE=false
+transaction_release_lock
+trap - EXIT INT TERM
+rm -rf -- "$fixture"
+printf 'PASS receipt: valid structured JSON and readiness fields\n'

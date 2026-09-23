@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-# shellcheck source=lib/core.sh
-. "$SCRIPT_DIR/lib/core.sh"
-tmp=$(mktemp -d)
-trap 'rm -rf -- "$tmp"' EXIT
-PROFILE=tiny JOURNAL_MIB=48 MODE=apply
-FILES=("$tmp/journald.conf" "$tmp/coredump.conf" "$tmp/sysctl.conf")
-desired() {
-  case "$1" in
-    *journald.conf) printf '%s\n[Journal]\nSystemMaxUse=%sM\n' "$MANAGED_MARKER" "$JOURNAL_MIB" ;;
-    *coredump.conf) printf '%s\n[Coredump]\nStorage=none\n' "$MANAGED_MARKER" ;;
-    *sysctl.conf) printf '%s\nfs.protected_hardlinks = 1\n' "$MANAGED_MARKER" ;;
-  esac
-}
-[[ $(file_status "${FILES[0]}" /dev/null) == NOT_CONFIGURED ]]
-make_plan > "$tmp/plan1"
-[[ $PLAN_CHANGED == 3 ]]
-for file in "${FILES[@]}"; do desired "$file" > "$file"; done
-make_plan > "$tmp/plan2"
-[[ $PLAN_CHANGED == 0 ]]
-cmp -s "${FILES[0]}" <(desired "${FILES[0]}")
-printf 'unowned\n' > "${FILES[0]}"
-[[ $(file_status "${FILES[0]}" /dev/null) == CONFLICT ]]
-printf 'PASS unit: desired state, idempotence and conflict guard\n'
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=tests/helpers.sh
+. "$root/tests/helpers.sh"
+make_fixture
+trap 'rm -rf -- "$fixture"' EXIT
+load_fixture
+
+[[ $PROFILE == tiny ]]
+[[ $JOURNAL_MIB == 64 ]]
+[[ $SWAP_MIB == 512 ]]
+[[ $(json_escape $'a"b\\c\n') == 'a\"b\\c\n' ]]
+
+managed_paths_init
+for file in "${MANAGED_PATHS[@]}"; do
+  [[ $(file_status "$file") == NOT_CONFIGURED ]]
+  mkdir -p "$(dirname "$file")"
+  desired_config "$file" > "$file"
+  [[ $(file_status "$file") == ALREADY_COMPLIANT ]]
+done
+printf 'foreign\n' > "${MANAGED_PATHS[0]}"
+[[ $(file_status "${MANAGED_PATHS[0]}") == CONFLICT ]]
+
+checks_reset
+add_check 0 one PASS true ok
+add_check 6 advisory WARN false advisory
+checks_blocking_ok
+add_check 3 required WARN true missing
+if checks_blocking_ok; then echo 'blocking WARN unexpectedly passed' >&2; exit 1; fi
+checks_json | python -m json.tool >/dev/null
+printf 'PASS unit: profiles, desired state, ownership, status model, JSON\n'

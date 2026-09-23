@@ -2,59 +2,93 @@
 
 [简体中文](README.zh-CN.md) · English
 
-Lite VPS Ops is a small, conservative baseline tool for **Debian 13 (Trixie)** VPS hosts with systemd and apt on amd64 or arm64. It audits resource pressure and a few operating system settings, and can apply a bounded configuration for journald, coredump and three low risk sysctl keys. It is not a CIS compliance tool.
+Lite VPS Ops is a lightweight, idempotent bootstrap, resilience, hardening, and health-baseline tool for **Debian 13 (Trixie)** VPS hosts using systemd and apt on amd64 or arm64. It is designed for small, long-lived servers—typically 512 MiB to a few GiB of RAM and 20–80 GiB disks—not for CIS scoring or application deployment.
 
-## Status and scope
+Version **1.0.0** implements the complete core node baseline. The default command is read-only.
 
-Version 0.1.0 is an initial release. The local Windows development environment can run syntax, ShellCheck and pure Bash unit tests. A booted Debian 13 VM is required to validate systemd and kernel behavior end to end. Until that test is recorded, treat apply as **experimental** and use a disposable Debian 13 host first.
+## Capabilities
 
-The tool does **not** configure SSH authentication, firewall rules, Swap files, apt updates or automatic reboots. These actions need host specific safeguards, especially a second independent SSH connection before SSH changes. It does not deploy any application or proxy service.
-
-## Install and run
-
-On a Debian 13 host, install the `systemd-coredump` package before apply, then download the pinned Release bootstrap file and inspect it before running. The package check runs before any managed configuration is written. Do not pipe a network response into a shell.
-
-```bash
-curl -fL --proto '=https' --tlsv1.2 \
-  -o bootstrap.sh https://github.com/s-qin/lite-vps-ops/releases/download/v0.1.0/bootstrap.sh
-less bootstrap.sh
-bash bootstrap.sh audit
-bash bootstrap.sh apply --profile tiny --dry-run
-sudo bash bootstrap.sh apply --profile tiny
-bash bootstrap.sh validate --profile tiny
-```
-
-The bootstrap downloads `lite-vps-ops-v0.1.0.tar.gz` and its `.sha256`, verifies the digest, runs from a temporary directory, and cleans it afterward. SHA-256 detects accidental or mismatched downloads; it does not provide independent publisher authentication. Pin and inspect the Release source. A run from a source checkout is also supported: `./lite-vps-ops audit`.
+- Full host audit: OS/kernel/architecture, identity/sudo, boot/uptime, RAM/MemAvailable, swap, load, memory and IO PSI, OOM, root disk/inodes, journal, logrotate/coredump, SSH effective configuration, time sync, unattended upgrades, failed units, pending updates, reboot-required, firewall state, managed drift, state and transaction count.
+- Fresh Debian maintenance: `apt update`, automatic minimal dependencies, unattended upgrades with automatic reboot disabled, and systemd-timesyncd validation.
+- SSH safety: authorized-key and sudo guards, an owned `sshd_config.d` drop-in, `sshd -t`, reload, and a mandatory second real controller connection before commit. TCP forwarding remains available.
+- Tiny-VPS resilience: resource-aware emergency swap, persistent fstab entry, conservative swappiness, pressure/OOM checks, conflict detection, idempotence and rollback.
+- Disk protection: bounded persistent journald, coredump policy, logrotate, tmpfiles, apt autoclean policy, and bounded transaction/backup/receipt retention.
+- Conservative sysctl: SYN cookies, source-route and redirect protections, protected links, kptr/dmesg restrictions and ptrace scope. It does not set BBR, MTU, TCP buffers, strict rp_filter, `ip_forward`, or IPv6 RA behavior.
+- Long-term operations: read-only `health`, plus a daily systemd service/timer covering disk, inodes, memory, swap, PSI, OOM, journal, time, failed units, updates and reboot-required.
+- Transactional delivery: ownership guards, SHA-256 snapshots, atomic writes, maintenance lock, native validators, rollback/revalidation, drift repair, versioned state, and JSON/Markdown receipts.
 
 ## Commands
 
-| Command | Behavior |
-| --- | --- |
-| `audit` (default) | Read-only host and desired-state inspection. `--json` emits a small machine-readable resource summary. |
-| `apply` | Explicit root-only write transaction for the three managed drop-ins. |
-| `validate` | Read-only comparison of managed files with the selected profile. Nonzero on drift. |
-| `repair` | Root-only convergence of previously owned files. Refuses to create a missing managed object. |
-| `health` | Read-only resource report; root disk/inode WARN at 80%, FAIL at 90%. Low available RAM, OOM kills since boot or failed units also trigger WARN. |
+```text
+lite-vps-ops audit      # default, read-only
+lite-vps-ops apply      # full convergence; root + controller SSH proof
+lite-vps-ops validate   # read-only full acceptance
+lite-vps-ops repair     # repair a committed v1 managed baseline
+lite-vps-ops health     # read-only operational health
+```
 
-`--profile auto|tiny|standard` selects the budget. `auto` chooses tiny at up to 2 GiB RAM, standard above that. Journald `SystemMaxUse` is 2% of root disk capped at 64 MiB for tiny, or 3% capped at 256 MiB for standard, with a 16 MiB floor. Tiny disables stored coredumps; standard caps their use. No Swap is created. The sysctl keys are `fs.protected_hardlinks`, `fs.protected_symlinks` and `net.ipv4.tcp_syncookies`.
+Options: `--profile auto|tiny|standard`, `--dry-run`, `--json`, `--version`, `--help`, and `--receipt-dir PATH`. `--ssh-blackbox-token` is reserved for the controller launcher.
 
-## Transaction and rollback
+`auto` selects `tiny` at up to 2 GiB RAM. Budgets are computed from both the profile and actual RAM/disk. Swap is an emergency buffer, never treated as replacement RAM.
 
-Before writing, the tool rejects a path it does not own, takes a maintenance lock, snapshots existing managed files with SHA-256, and records current values of affected sysctl keys. It writes each file atomically, validates the effective systemd configuration or applies the sysctl file, and checks the journald restart command. On failure it restores files and sysctl values and revalidates, then writes a failure receipt. Receipts and backups are under `/var/lib/lite-vps-ops/transactions/<run-id>/` with restricted directory permissions. `managed_baseline_ready` reports success for this release's narrow managed scope; `node_baseline_ready` remains false until the wider architecture is implemented. Review the receipt and manifest before manually reverting a successful transaction. The tool does not perform an automatic reboot.
+## Safe installation
 
-The tool only owns files with its marker under `/etc/systemd/journald.conf.d/`, `/etc/systemd/coredump.conf.d/` and `/etc/sysctl.d/`. Existing unmarked files at those paths are a conflict. A malicious or invalid external drop-in elsewhere can still affect effective configuration; inspect the dry-run and host state.
+Pin a release, inspect the small bootstrap, then run it. The bootstrap installs its own download prerequisites when apt and root/passwordless sudo are available, downloads the matching archive into `mktemp`, verifies SHA-256, runs it, and cleans staging. It never leaves a Git clone on the server.
 
-## Tests
+```bash
+curl -fL --proto '=https' --tlsv1.2 \
+  -o bootstrap.sh https://github.com/s-qin/lite-vps-ops/releases/download/v1.0.0/bootstrap.sh
+less bootstrap.sh
+bash bootstrap.sh audit --profile auto
+bash bootstrap.sh apply --profile tiny --dry-run
+```
+
+An apply that may create or update the SSH drop-in must be launched from Windows with the controller so a second independent connection can prove continuity:
+
+```powershell
+.\controller\lite-vps-ops.ps1 -HostAlias glm-edge-us -Profile tiny -Command apply -Version v1.0.0
+```
+
+If the controller proof is absent or times out, no SSH change is committed and the transaction rolls back. A later non-SSH-changing apply can run through `sudo bash bootstrap.sh apply --profile tiny` after the v1 proof is recorded.
+
+## Persistent objects
+
+The tool owns only fixed, marked files:
+
+- `/etc/apt/apt.conf.d/52lite-vps-ops-periodic`
+- `/etc/apt/apt.conf.d/53lite-vps-ops-unattended`
+- `/etc/ssh/sshd_config.d/60-lite-vps-ops.conf`
+- `/etc/systemd/journald.conf.d/60-lite-vps-ops.conf`
+- `/etc/systemd/coredump.conf.d/60-lite-vps-ops.conf`
+- `/etc/sysctl.d/60-lite-vps-ops.conf`
+- `/etc/tmpfiles.d/lite-vps-ops.conf`
+- `/usr/local/libexec/lite-vps-ops-health`
+- `/etc/systemd/system/lite-vps-ops-health.service` and `.timer`
+- `/swapfile` and one marked `/etc/fstab` block only when no swap already exists
+- `/var/lib/lite-vps-ops/` state and bounded transactions
+
+An existing unmarked target is a `CONFLICT`; unknown business data is never deleted. Package installation is additive and is recorded but not automatically removed during rollback. The tool never automatically reboots.
+
+## Firewall and optional defenses
+
+Host firewall state is audited. v1.0.0 deliberately does not invent a default-deny port allow-list because that could break future services, IPv6, cloud firewall policy, or management paths. Existing nftables/UFW rules are not overwritten. Fail2Ban/sshguard, AIDE, full auditd/CIS, PAM/account policy, and application-specific health are optional/out of the default baseline.
+
+## Migration from v0.1.0
+
+The v0.1.0 tag and release remain immutable. v1 recognizes the exact v0.1 ownership marker for the three historical journald/coredump/sysctl files, snapshots them, and migrates them in place. It adds the missing Phase 1/2/3/4/5/6/7 objects and replaces the old narrow readiness meaning. Only complete validation can report `NODE_BASELINE_READY=true`.
+
+## Testing
 
 ```bash
 bash tests/run.sh
-shellcheck -S warning lite-vps-ops bootstrap.sh lib/*.sh tests/*.sh
+shellcheck -S warning lite-vps-ops bootstrap.sh lib/*.sh tests/*.sh scripts/*.sh
+bash scripts/package.sh
 ```
 
-CI runs those tests and a Debian 13 container platform boundary check. The container has no booted systemd, so apply/validate E2E is explicitly skipped. A future disposable Debian 13 VM job should run apply, validate, a second apply with unchanged hashes, and a real SSH black-box check before SSH changes are introduced.
+Tests cover syntax, desired state, ownership/conflict, JSON, snapshots, idempotence, rollback and rollback failure, lock contention, retention, dry-run, receipts and package integrity. CI labels its Debian container check as a platform boundary only. The v1.0.0 release was also validated on a booted Debian 13.7 systemd host with controller-side SSH continuity and unchanged second-apply hashes; see the release notes and execution record for exact evidence.
 
 ## Attribution
 
-Architecture and safety ideas were informed by [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening), [Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit), and [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening). No upstream code was copied. In particular, idempotence, validator-first writes and rollback are adapted to this tool's smaller scope; broad CIS settings are deliberately excluded.
+The design draws on [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening), [Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit), and [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening). The implementation is independent and intentionally excludes broad CIS settings.
 
 MIT licensed. See [LICENSE](LICENSE).

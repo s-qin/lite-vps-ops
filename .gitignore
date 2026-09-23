@@ -12,3 +12,6 @@ Thumbs.db
 *.tmp
 receipts/
 .tools/
+task_plan.md
+findings.md
+progress.md
