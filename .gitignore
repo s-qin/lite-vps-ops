@@ -1,0 +1,14 @@
+.coverage
+*.pyc
+__pycache__/
+.pytest_cache/
+dist/
+*.tar.gz
+*.sha256
+checksums.txt
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+receipts/
+.tools/

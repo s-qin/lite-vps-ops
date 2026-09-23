@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/core.sh
+. "$SCRIPT_DIR/lib/core.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: lite-vps-ops [audit|apply|validate|repair|health] [options]
+Options: --profile auto|tiny|standard  --dry-run  --json  --version  --help
+Default mode is audit. Only explicit apply or repair writes system state.
+EOF
+}
+
+MODE=audit PROFILE=auto DRY_RUN=false JSON=false
+if (( $# )) && [[ $1 != -* ]]; then MODE=$1; shift; fi
+case "$MODE" in audit|apply|validate|repair|health) ;; *) usage; exit 2 ;; esac
+while (( $# )); do
+  case "$1" in
+    --profile) [[ $# -ge 2 ]] || die '--profile needs a value'; PROFILE=$2; shift 2 ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --json) JSON=true; shift ;;
+    --version) say "$LVO_VERSION"; exit 0 ;;
+    --help|-h) usage; exit 0 ;;
+    *) die "Unknown option: $1" ;;
+  esac
+done
+if [[ $JSON == true && ( $MODE == apply || $MODE == repair ) ]]; then die '--json is read-only mode only'; fi
+require_platform
+profile_resolve
+if [[ $MODE == apply || $MODE == repair ]]; then
+  if [[ $DRY_RUN == true ]]; then make_plan; exit 0; fi
+  apply_transaction
+else
+  # Read-only collection. Every missing probe is explicit rather than an invented PASS.
+  if [[ $JSON == true ]]; then
+    printf '{"version":"%s","mode":"%s","profile":"%s","ram_available_kib":%s,"swap_total_kib":%s,"root_usage_percent":%s,"inode_usage_percent":%s,"journal_budget_mib":%s}\n' \
+      "$LVO_VERSION" "$MODE" "$PROFILE" \
+      "$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)" \
+      "$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)" \
+      "$(df -P / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')" \
+      "$(df -Pi / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')" "$JOURNAL_MIB"
+  else
+    say "Lite VPS Ops $LVO_VERSION | $MODE | profile=$PROFILE"
+    say "RAM available: $(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo) MiB"
+    say "Swap total: $(awk '/^SwapTotal:/ {print int($2/1024)}' /proc/meminfo) MiB"
+    say "Root disk: $(df -Ph / | awk 'NR==2 {print $5}') | inodes: $(df -Pi / | awk 'NR==2 {print $5}')"
+    say "Journal budget: ${JOURNAL_MIB} MiB"
+    if [[ -r /proc/vmstat ]]; then say "OOM kills since boot: $(awk '$1=="oom_kill" {print $2}' /proc/vmstat)"; else say 'OOM kills: SKIP'; fi
+    if [[ -r /proc/pressure/memory ]]; then say "Memory PSI: $(head -n 1 /proc/pressure/memory)"; else say 'Memory PSI: SKIP'; fi
+    if [[ -r /proc/pressure/io ]]; then say "IO PSI: $(head -n 1 /proc/pressure/io)"; else say 'IO PSI: SKIP'; fi
+    if has journalctl; then say "Journal usage: $(journalctl --disk-usage 2>/dev/null | tail -n 1 || printf 'INCONCLUSIVE')"; fi
+    if [[ -x /usr/sbin/sshd ]]; then
+      ssh_effective=$(/usr/sbin/sshd -T 2>/dev/null || true)
+      if [[ -z $ssh_effective ]] && has sudo; then ssh_effective=$(sudo -n /usr/sbin/sshd -T 2>/dev/null || true); fi
+      if [[ -n $ssh_effective ]]; then
+        say "SSH pubkey authentication: $(awk '$1=="pubkeyauthentication" {print $2}' <<< "$ssh_effective")"
+        say "SSH password authentication: $(awk '$1=="passwordauthentication" {print $2}' <<< "$ssh_effective")"
+      else say 'SSH effective config: INCONCLUSIVE'; fi
+    else say 'SSH daemon: SKIP'; fi
+    if has dpkg-query; then
+      if dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null | grep -Fq 'install ok installed'; then say 'Unattended upgrades package: INSTALLED'; else say 'Unattended upgrades package: MISSING'; fi
+      if dpkg-query -W -f='${Status}' systemd-coredump 2>/dev/null | grep -Fq 'install ok installed'; then say 'systemd-coredump package: INSTALLED'; else say 'systemd-coredump package: MISSING'; fi
+    fi
+    if has timedatectl; then say "Time sync: $(timedatectl show -p NTPSynchronized --value 2>/dev/null || printf 'INCONCLUSIVE')"; fi
+    if has systemctl; then say "Failed units: $(systemctl --failed --no-legend --plain 2>/dev/null | wc -l | tr -d ' ' || printf 'INCONCLUSIVE')"; fi
+    if [[ -e /run/reboot-required ]]; then say 'Reboot required: YES'; else say 'Reboot required: NO'; fi
+    make_plan
+    if [[ $MODE == health ]]; then
+      disk_pct=$(df -P / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+      inode_pct=$(df -Pi / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+      if (( disk_pct >= 90 || inode_pct >= 90 )); then say 'HEALTH=FAIL'; exit 1; fi
+      mem_total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+      mem_available=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+      oom_kills=$(awk '$1=="oom_kill" {print $2}' /proc/vmstat)
+      failed_units=$(systemctl --failed --no-legend --plain 2>/dev/null | wc -l)
+      if (( disk_pct >= 80 || inode_pct >= 80 || mem_available * 10 < mem_total || oom_kills > 0 || failed_units > 0 )); then say 'HEALTH=WARN'; exit 0; fi
+      say 'HEALTH=PASS'
+    fi
+  fi
+fi
