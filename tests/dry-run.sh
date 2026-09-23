@@ -13,4 +13,3 @@ rm -f -- /tmp/lvo-dry-run.$$
 [[ $before == "$after" ]]
 [[ ! -e $fixture/var/lib/lite-vps-ops/maintenance.lock ]]
 printf 'PASS dry-run: fixture and state unchanged\n'
-

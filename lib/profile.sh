@@ -33,4 +33,3 @@ profile_resolve() {
   (( SWAP_MIB > disk_cap )) && SWAP_MIB=$disk_cap
   (( free_mib - SWAP_MIB >= 1024 )) || SWAP_MIB=0
 }
-
