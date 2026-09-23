@@ -2,70 +2,153 @@
 
 简体中文 · [English](README.md)
 
-Lite VPS Ops 是面向 **Debian 13 (Trixie)**、systemd、apt、amd64/arm64 轻量 VPS 的幂等主机初始化、韧性保护、安全基线与健康验收工具。典型目标为 512 MiB～数 GiB RAM、20～80 GiB 磁盘的长期运行节点；它不是 CIS 打分器，也不部署任何业务。
+Lite VPS Ops 是面向小型、长期运行的 **Debian 13 (Trixie)** VPS 的轻量、幂等节点基线工具，提供系统审计、系统维护、SSH 加固、内存韧性、有界日志、保守内核配置、事务化变更和持续健康检查。
 
-**v1.0.0** 已实现完整核心 Node Baseline，默认命令保持只读。
+当前正式版本为 **v1.0.0**。默认命令是只读的 `audit`。
 
 ## 能力
 
-- 完整审计：OS/Kernel/架构、用户/sudo、boot/uptime、RAM/MemAvailable、Swap、load、memory/IO PSI、OOM、根盘/inode、journal、logrotate/coredump、SSH effective config、时钟、无人值守更新、失败单元、待更新包、reboot-required、防火墙、drift、state 和 transaction。
-- Fresh Debian 维护：`apt update`、最小依赖自动安装、unattended-upgrades、禁止自动 reboot、systemd-timesyncd 验收。
-- SSH 防失联：authorized_keys/sudo guard、owned drop-in、`sshd -t`、reload，以及提交前由控制端建立第二个真实 SSH 会话；保留 TCP forwarding。
-- 小内存韧性：资源感知 emergency swap、fstab 持久化、保守 swappiness、PSI/OOM/Swap pressure、冲突处理、幂等与回滚。
-- 磁盘保护：有界 journald、coredump、logrotate、tmpfiles、apt autoclean，以及 transaction/backup/receipt retention。
-- 保守 sysctl：SYN cookies、source route/redirect、protected links、kptr/dmesg、ptrace；明确不设置 BBR、MTU、TCP buffer、strict rp_filter、`ip_forward` 或 IPv6 RA。
-- 长期 Ops：只读 `health`，以及每日 systemd service/timer，覆盖磁盘、inode、内存、Swap、PSI、OOM、journal、时钟、失败单元、安全更新与重启标志。
-- 统一事务：ownership guard、SHA-256 snapshot、原子写、维护锁、原生 validator、rollback/revalidate、repair、版本化 state、JSON/Markdown Receipt。
+- 审计操作系统、内核、架构、身份、sudo、启动状态、内存、Swap、负载、PSI、OOM、磁盘、inode、Journal、systemd 单元、更新、时间同步、SSH、防火墙状态、受管配置和事务状态。
+- 安装所需 Debian 软件包、刷新 apt 元数据、配置禁止自动重启的无人值守更新，并验证时间同步。
+- 通过受管 drop-in 应用 SSH 仅密钥认证，使用 `sshd -t` 验证、reload，并在提交 SSH 变更前要求控制端建立第二个独立连接。
+- 在主机没有活动 Swap 时创建资源感知的应急 Swap 文件，并应用保守的 swappiness。
+- 限制 journald、coredump、tmpfiles、apt cache、transaction、backup 和 receipt 的增长。
+- 应用面向网络和内核保护的保守 sysctl 基线。
+- 安装只读健康检查程序以及每日 systemd service 和 timer。
+- 使用 ownership marker、snapshot、SHA-256 metadata、原子写、维护锁、原生验证器、回滚、重新验证、drift repair 和 JSON/Markdown Receipt。
+
+## 架构
+
+Release 交付流程：
+
+```text
+GitHub Release
+  -> HTTPS 下载 bootstrap
+  -> 下载版本化归档
+  -> SHA-256 校验
+  -> 临时 staging
+  -> 执行
+  -> 清理 staging
+```
+
+配置变更使用统一事务生命周期：
+
+```text
+AUDIT -> SNAPSHOT -> LOCK -> PLAN -> APPLY -> VALIDATE
+      -> SSH BLACK-BOX VALIDATE（需要时）-> COMMIT -> RECEIPT
+```
+
+发生失败时，事务会回滚受管变更、恢复已捕获的运行时 sysctl 值、重新验证主机，并记录结果。
+
+## 支持范围
+
+- Debian 13 (Trixie)
+- 已启动的 systemd 与 apt
+- amd64 (`x86_64`) 或 arm64 (`aarch64`)
+- `apply` 和 `repair` 需要 root 或免密 sudo
+- 需要控制端证明的 SSH 变更使用 SSH 公钥访问
+- 典型目标规格：512 MiB 至数 GiB RAM、20–80 GiB 磁盘
+
+Windows 控制器需要 PowerShell 和 OpenSSH。Release 安装需要能够通过 HTTPS 访问 GitHub。
+
+## 安装
+
+固定 Release，并在运行前审查 bootstrap：
+
+```bash
+curl -fL --proto '=https' --tlsv1.2 \
+  -o bootstrap.sh \
+  https://github.com/s-qin/lite-vps-ops/releases/download/v1.0.0/bootstrap.sh
+less bootstrap.sh
+bash bootstrap.sh audit --profile auto
+```
+
+在不修改主机的情况下预览 Desired State：
+
+```bash
+sudo bash bootstrap.sh apply --profile auto --dry-run
+```
+
+会创建或修改 SSH drop-in 的操作必须从仓库检出目录通过控制器运行：
+
+```powershell
+.\controller\lite-vps-ops.ps1 `
+  -HostAlias my-vps `
+  -Profile tiny `
+  -Command apply `
+  -Version v1.0.0
+```
+
+控制器会保持原会话、等待远端 SSH Gate、建立第二个独立连接，并执行最终连续性检查。
 
 ## CLI
 
 ```text
-lite-vps-ops audit      # 默认，只读
-lite-vps-ops apply      # 完整收敛；需要 root 与控制端 SSH 证明
-lite-vps-ops validate   # 只读完整验收
-lite-vps-ops repair     # 修复已提交 v1 基线的 drift
-lite-vps-ops health     # 只读运维健康检查
+lite-vps-ops audit      只读的完整主机与受管状态审计（默认）
+lite-vps-ops apply      在单个事务中收敛完整基线
+lite-vps-ops validate   只读节点基线验收
+lite-vps-ops repair     修复已提交受管基线中的 drift
+lite-vps-ops health     只读运维健康检查
 ```
 
-选项：`--profile auto|tiny|standard`、`--dry-run`、`--json`、`--version`、`--help`、`--receipt-dir PATH`。`--ssh-blackbox-token` 仅供控制端 Launcher 使用。
+选项：
 
-`auto` 在不超过 2 GiB RAM 时选择 tiny。Journal、Swap 和 retention 都由 Profile 与真实 RAM/Disk 共同计算；Swap 只是应急缓冲，不是第二块 RAM。
-
-## 安全安装
-
-固定 Release、审查 bootstrap 后再执行。Bootstrap 在 apt 与 root/免密 sudo 可用时自动补齐下载依赖，使用 `mktemp` 下载版本归档、校验 SHA-256、执行并清理，不在服务器保留 Git clone。
-
-```bash
-curl -fL --proto '=https' --tlsv1.2 \
-  -o bootstrap.sh https://github.com/s-qin/lite-vps-ops/releases/download/v1.0.0/bootstrap.sh
-less bootstrap.sh
-bash bootstrap.sh audit --profile auto
-bash bootstrap.sh apply --profile tiny --dry-run
+```text
+--profile auto|tiny|standard
+--dry-run
+--json
+--receipt-dir PATH
+--version
+--help
 ```
 
-首次可能写入 SSH drop-in 的 apply 必须从 Windows 控制端启动：
+`--ssh-blackbox-token` 仅供控制器使用。
 
-```powershell
-.\controller\lite-vps-ops.ps1 -HostAlias glm-edge-us -Profile tiny -Command apply -Version v1.0.0
-```
+## Profiles
 
-控制端会在 reload 后建立第二个独立 SSH 会话。证明缺失或超时会使事务回滚，SSH 变更不会提交。v1 证明已记录且 SSH 无变化后，可直接使用 `sudo bash bootstrap.sh apply --profile tiny`。
+`auto` 在 RAM 不超过 2 GiB 的主机上选择 `tiny`，在更大的主机上选择 `standard`。运行时预算由所选 Profile 与主机实际 RAM、磁盘共同计算。
 
-## 持久对象与安全边界
+| 设置 | tiny | standard |
+|---|---:|---:|
+| Journald 保留时间 | 14 天 | 30 天 |
+| Journald 最大值 | 64 MiB | 256 MiB |
+| Coredump 存储 | 禁用 | external，最大 128 MiB |
+| Swap 范围 | 256–512 MiB | 512–2048 MiB |
+| Swappiness | 10 | 10 |
+| 保留事务数 | 20 | 30 |
+| 事务最长保留时间 | 30 天 | 60 天 |
 
-工具只拥有固定且带 marker 的 apt、SSH、journald、coredump、sysctl、tmpfiles、health runner/service/timer 文件；在无现有 Swap 时拥有 `/swapfile` 与 `/etc/fstab` 中一个明确标记的 block；状态和有界事务位于 `/var/lib/lite-vps-ops/`。完整路径见英文 README。
+Swap 会根据检测到的内存和可用磁盘，在 Profile 范围内计算大小。
 
-固定路径已有无 marker 内容时返回 `CONFLICT`；未知业务数据绝不删除。软件包安装是可审计的加法操作，rollback 默认不自动卸载包。工具绝不自动重启。
+## 持久对象
 
-## Firewall 与 Optional 能力
+Lite VPS Ops 管理以下带 marker 的对象：
 
-v1.0.0 审计 host firewall，但不会凭空生成 default-deny 端口清单，以免破坏未来服务、IPv6、云 Firewall 或管理路径；已有 nftables/UFW 不会被覆盖。Fail2Ban/sshguard、AIDE、完整 auditd/CIS、PAM/account 策略和业务健康检查属于 Optional/默认范围外。
+- `/etc/apt/apt.conf.d/52lite-vps-ops-periodic`
+- `/etc/apt/apt.conf.d/53lite-vps-ops-unattended`
+- `/etc/ssh/sshd_config.d/60-lite-vps-ops.conf`
+- `/etc/systemd/journald.conf.d/60-lite-vps-ops.conf`
+- `/etc/systemd/coredump.conf.d/60-lite-vps-ops.conf`
+- `/etc/sysctl.d/60-lite-vps-ops.conf`
+- `/etc/tmpfiles.d/lite-vps-ops.conf`
+- `/usr/local/libexec/lite-vps-ops-health`
+- `/etc/systemd/system/lite-vps-ops-health.service`
+- `/etc/systemd/system/lite-vps-ops-health.timer`
+- 创建 Swap 时使用的 `/swapfile` 和 `/etc/fstab` 中一个带 marker 的 block
+- `/var/lib/lite-vps-ops/` 中的状态、锁、事务、备份和 Receipt
 
-## 从 v0.1.0 迁移
+## 安全边界
 
-v0.1.0 Tag/Release 保持不变。v1 识别历史三个 drop-in 的精确旧 marker，先 Snapshot，再原位迁移，并补齐 Phase 1～7 缺口。旧版“managed baseline”不再等价于节点就绪；只有完整验证才会返回 `NODE_BASELINE_READY=true`。
+- 默认命令以及所有 `audit`、`validate`、`health` 操作均为只读。
+- 受管路径已有无 marker 内容时报告 `CONFLICT`。
+- 工具不删除未知业务数据，也不自动重启主机。
+- SSH 变更必须通过语法验证和独立连接证明。
+- 已有 Host Firewall 规则只审计、不覆盖；Cloud Firewall 策略位于主机基线之外。
+- 不修改路由、IPv6 行为、MTU、TCP Buffer 大小或拥塞控制算法。
 
-## 测试与证据
+## 测试
+
+运行本地测试套件和打包检查：
 
 ```bash
 bash tests/run.sh
@@ -73,10 +156,15 @@ shellcheck -S warning lite-vps-ops bootstrap.sh lib/*.sh tests/*.sh scripts/*.sh
 bash scripts/package.sh
 ```
 
-测试覆盖语法、Desired State、ownership/conflict、JSON、snapshot、幂等、rollback/rollback failure、并发锁、retention、dry-run、Receipt 与归档校验。CI 中 Debian container 明确只是 platform-boundary。v1.0.0 还在 booted Debian 13.7 systemd 主机完成控制端 SSH 黑盒连续性、apply/validate、第二次 apply 哈希不变、health 与 repair；精确证据见 Release notes 和执行记录。
+测试覆盖语法、Profile、Desired State、ownership conflict、结构化输出、snapshot、幂等、rollback、rollback failure 报告、dry-run、并发锁、retention、Receipt、bootstrap cleanup 和归档完整性。
 
-## 上游参考
+GitHub Actions 运行 lint、unit、integration、package、secret-scan 和 Debian 13 container-boundary 作业。v1.0.0 还在已启动 systemd 的 Debian 13.7 主机完成端到端验证，包括控制端 SSH 连续性、重复 apply、validate、repair、health、Release 下载和 checksum 校验。
 
-设计参考 [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening)、[Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit) 与 [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening)。本项目独立实现，未引入整套 CIS。
+## 项目链接
 
-MIT License，见 [LICENSE](LICENSE)。
+- [v1.0.0 Release](https://github.com/s-qin/lite-vps-ops/releases/tag/v1.0.0)
+- [Changelog](CHANGELOG.md)
+- [Release Notes](RELEASE_NOTES.md)
+- [MIT License](LICENSE)
+
+设计参考了 [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening)、[Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit) 和 [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening) 的思路。项目代码为独立实现。

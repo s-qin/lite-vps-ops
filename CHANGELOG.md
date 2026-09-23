@@ -2,17 +2,13 @@
 
 ## v1.0.0
 
-- Complete Architecture Spec core Phase 0–7 baseline for Debian 13.
-- Add Fresh Debian dependency/apt/unattended-update/time setup.
-- Add controller-proved SSH hardening with automatic rollback.
-- Add resource-aware emergency swap and pressure/OOM validation.
-- Add bounded journald, coredump, tmpfiles, apt cache and tool transaction retention.
-- Expand the conservative sysctl baseline without performance/routing tuning.
-- Add daily systemd health service/timer.
-- Replace the v0.1 transaction core with versioned state, structured receipts, drift repair, lock contention and rollback-failure handling.
-- Add layered CI and local unit/integration/fault/idempotence/dry-run/receipt/package tests.
-- Preserve and migrate the exact v0.1.0 owned drop-ins; keep the historical tag/release unchanged.
-
-## v0.1.0
-
-Initial bounded Debian 13 audit and journald/coredump/sysctl experiment with Release bootstrap. This historical release did not implement the full node baseline.
+- Release the complete Debian 13 Phase 0–7 node baseline.
+- Add read-only audit, validation, repair, and operational health commands.
+- Add Debian package maintenance, unattended-upgrade policy, and time validation.
+- Add controller-proved SSH hardening with transactional rollback.
+- Add resource-aware emergency swap and memory-pressure checks.
+- Add bounded journald, coredump, tmpfiles, apt cache, and transaction storage.
+- Add a conservative sysctl baseline and daily systemd health timer.
+- Add versioned state, drift detection, structured receipts, maintenance locking, rollback, and revalidation.
+- Add layered lint, unit, integration, fault-injection, idempotence, dry-run, receipt, bootstrap-cleanup, package, and secret-scan checks.
+- Validate the release on a booted Debian 13.7 systemd host with independent SSH continuity and Release Pull verification.

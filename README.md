@@ -2,58 +2,127 @@
 
 [简体中文](README.zh-CN.md) · English
 
-Lite VPS Ops is a lightweight, idempotent bootstrap, resilience, hardening, and health-baseline tool for **Debian 13 (Trixie)** VPS hosts using systemd and apt on amd64 or arm64. It is designed for small, long-lived servers—typically 512 MiB to a few GiB of RAM and 20–80 GiB disks—not for CIS scoring or application deployment.
+Lite VPS Ops is a lightweight, idempotent node-baseline tool for small, long-lived **Debian 13 (Trixie)** VPS hosts. It provides system auditing, maintenance, SSH hardening, memory resilience, bounded logging, conservative kernel settings, transactional changes, and ongoing health checks.
 
-Version **1.0.0** implements the complete core node baseline. The default command is read-only.
+The current release is **v1.0.0**. The default command is the read-only `audit` command.
 
 ## Capabilities
 
-- Full host audit: OS/kernel/architecture, identity/sudo, boot/uptime, RAM/MemAvailable, swap, load, memory and IO PSI, OOM, root disk/inodes, journal, logrotate/coredump, SSH effective configuration, time sync, unattended upgrades, failed units, pending updates, reboot-required, firewall state, managed drift, state and transaction count.
-- Fresh Debian maintenance: `apt update`, automatic minimal dependencies, unattended upgrades with automatic reboot disabled, and systemd-timesyncd validation.
-- SSH safety: authorized-key and sudo guards, an owned `sshd_config.d` drop-in, `sshd -t`, reload, and a mandatory second real controller connection before commit. TCP forwarding remains available.
-- Tiny-VPS resilience: resource-aware emergency swap, persistent fstab entry, conservative swappiness, pressure/OOM checks, conflict detection, idempotence and rollback.
-- Disk protection: bounded persistent journald, coredump policy, logrotate, tmpfiles, apt autoclean policy, and bounded transaction/backup/receipt retention.
-- Conservative sysctl: SYN cookies, source-route and redirect protections, protected links, kptr/dmesg restrictions and ptrace scope. It does not set BBR, MTU, TCP buffers, strict rp_filter, `ip_forward`, or IPv6 RA behavior.
-- Long-term operations: read-only `health`, plus a daily systemd service/timer covering disk, inodes, memory, swap, PSI, OOM, journal, time, failed units, updates and reboot-required.
-- Transactional delivery: ownership guards, SHA-256 snapshots, atomic writes, maintenance lock, native validators, rollback/revalidation, drift repair, versioned state, and JSON/Markdown receipts.
+- Audits the operating system, kernel, architecture, identity, sudo access, boot state, memory, swap, load, PSI, OOM events, disk, inodes, journal usage, systemd units, updates, time synchronization, SSH, firewall state, managed configuration, and transaction state.
+- Installs the required Debian packages, refreshes apt metadata, configures unattended upgrades without automatic reboot, and validates time synchronization.
+- Applies SSH key-only authentication through an owned drop-in, validates it with `sshd -t`, reloads SSH, and requires an independent controller connection before committing an SSH change.
+- Creates a resource-aware emergency swap file when the host has no active swap and applies conservative swappiness.
+- Bounds journald, coredump, tmpfiles, apt cache, transaction, backup, and receipt growth.
+- Applies a conservative sysctl baseline for network and kernel protections.
+- Installs a read-only health runner with a daily systemd service and timer.
+- Uses ownership markers, snapshots, SHA-256 metadata, atomic writes, a maintenance lock, native validators, rollback, revalidation, drift repair, and JSON/Markdown receipts.
 
-## Commands
+## Architecture
+
+Release delivery follows this flow:
 
 ```text
-lite-vps-ops audit      # default, read-only
-lite-vps-ops apply      # full convergence; root + controller SSH proof
-lite-vps-ops validate   # read-only full acceptance
-lite-vps-ops repair     # repair a committed v1 managed baseline
-lite-vps-ops health     # read-only operational health
+GitHub Release
+  -> HTTPS bootstrap download
+  -> versioned archive download
+  -> SHA-256 verification
+  -> temporary staging
+  -> execution
+  -> staging cleanup
 ```
 
-Options: `--profile auto|tiny|standard`, `--dry-run`, `--json`, `--version`, `--help`, and `--receipt-dir PATH`. `--ssh-blackbox-token` is reserved for the controller launcher.
+Configuration changes follow a single transaction lifecycle:
 
-`auto` selects `tiny` at up to 2 GiB RAM. Budgets are computed from both the profile and actual RAM/disk. Swap is an emergency buffer, never treated as replacement RAM.
+```text
+AUDIT -> SNAPSHOT -> LOCK -> PLAN -> APPLY -> VALIDATE
+      -> SSH BLACK-BOX VALIDATE (when required) -> COMMIT -> RECEIPT
+```
 
-## Safe installation
+On failure, the transaction rolls back managed changes, restores captured runtime sysctl values, revalidates the host, and records the result.
 
-Pin a release, inspect the small bootstrap, then run it. The bootstrap installs its own download prerequisites when apt and root/passwordless sudo are available, downloads the matching archive into `mktemp`, verifies SHA-256, runs it, and cleans staging. It never leaves a Git clone on the server.
+## Supported systems
+
+- Debian 13 (Trixie)
+- Booted systemd and apt
+- amd64 (`x86_64`) or arm64 (`aarch64`)
+- Root or passwordless sudo for `apply` and `repair`
+- SSH public-key access for controller-proved SSH changes
+- Typical target size: 512 MiB to several GiB of RAM and 20–80 GiB of disk
+
+The Windows controller requires PowerShell and OpenSSH. Release installation requires outbound HTTPS access to GitHub.
+
+## Installation
+
+Pin the release and inspect the bootstrap before running it:
 
 ```bash
 curl -fL --proto '=https' --tlsv1.2 \
-  -o bootstrap.sh https://github.com/s-qin/lite-vps-ops/releases/download/v1.0.0/bootstrap.sh
+  -o bootstrap.sh \
+  https://github.com/s-qin/lite-vps-ops/releases/download/v1.0.0/bootstrap.sh
 less bootstrap.sh
 bash bootstrap.sh audit --profile auto
-bash bootstrap.sh apply --profile tiny --dry-run
 ```
 
-An apply that may create or update the SSH drop-in must be launched from Windows with the controller so a second independent connection can prove continuity:
+Preview the desired state without changing the host:
+
+```bash
+sudo bash bootstrap.sh apply --profile auto --dry-run
+```
+
+An operation that creates or changes the SSH drop-in must run through the controller from a repository checkout:
 
 ```powershell
-.\controller\lite-vps-ops.ps1 -HostAlias glm-edge-us -Profile tiny -Command apply -Version v1.0.0
+.\controller\lite-vps-ops.ps1 `
+  -HostAlias my-vps `
+  -Profile tiny `
+  -Command apply `
+  -Version v1.0.0
 ```
 
-If the controller proof is absent or times out, no SSH change is committed and the transaction rolls back. A later non-SSH-changing apply can run through `sudo bash bootstrap.sh apply --profile tiny` after the v1 proof is recorded.
+The controller keeps the original session open, waits for the remote SSH gate, establishes a second independent connection, and performs a final continuity check.
+
+## CLI
+
+```text
+lite-vps-ops audit      Read-only full host and managed-state audit (default)
+lite-vps-ops apply      Converge the complete baseline in one transaction
+lite-vps-ops validate   Read-only node-baseline acceptance
+lite-vps-ops repair     Repair drift in a committed managed baseline
+lite-vps-ops health     Read-only operational health check
+```
+
+Options:
+
+```text
+--profile auto|tiny|standard
+--dry-run
+--json
+--receipt-dir PATH
+--version
+--help
+```
+
+`--ssh-blackbox-token` is reserved for the controller.
+
+## Profiles
+
+`auto` selects `tiny` on hosts with up to 2 GiB of RAM and `standard` on larger hosts. Runtime budgets are derived from the selected profile and the host's actual RAM and disk.
+
+| Setting | tiny | standard |
+|---|---:|---:|
+| Journald retention | 14 days | 30 days |
+| Journald maximum | 64 MiB | 256 MiB |
+| Coredump storage | disabled | external, 128 MiB maximum |
+| Swap range | 256–512 MiB | 512–2048 MiB |
+| Swappiness | 10 | 10 |
+| Transactions retained | 20 | 30 |
+| Transaction maximum age | 30 days | 60 days |
+
+Swap is sized within the profile range using detected memory and available disk.
 
 ## Persistent objects
 
-The tool owns only fixed, marked files:
+Lite VPS Ops manages these marked objects:
 
 - `/etc/apt/apt.conf.d/52lite-vps-ops-periodic`
 - `/etc/apt/apt.conf.d/53lite-vps-ops-unattended`
@@ -63,21 +132,23 @@ The tool owns only fixed, marked files:
 - `/etc/sysctl.d/60-lite-vps-ops.conf`
 - `/etc/tmpfiles.d/lite-vps-ops.conf`
 - `/usr/local/libexec/lite-vps-ops-health`
-- `/etc/systemd/system/lite-vps-ops-health.service` and `.timer`
-- `/swapfile` and one marked `/etc/fstab` block only when no swap already exists
-- `/var/lib/lite-vps-ops/` state and bounded transactions
+- `/etc/systemd/system/lite-vps-ops-health.service`
+- `/etc/systemd/system/lite-vps-ops-health.timer`
+- `/swapfile` and one marked `/etc/fstab` block when swap is created
+- `/var/lib/lite-vps-ops/` state, lock, transactions, backups, and receipts
 
-An existing unmarked target is a `CONFLICT`; unknown business data is never deleted. Package installation is additive and is recorded but not automatically removed during rollback. The tool never automatically reboots.
+## Safety boundaries
 
-## Firewall and optional defenses
-
-Host firewall state is audited. v1.0.0 deliberately does not invent a default-deny port allow-list because that could break future services, IPv6, cloud firewall policy, or management paths. Existing nftables/UFW rules are not overwritten. Fail2Ban/sshguard, AIDE, full auditd/CIS, PAM/account policy, and application-specific health are optional/out of the default baseline.
-
-## Migration from v0.1.0
-
-The v0.1.0 tag and release remain immutable. v1 recognizes the exact v0.1 ownership marker for the three historical journald/coredump/sysctl files, snapshots them, and migrates them in place. It adds the missing Phase 1/2/3/4/5/6/7 objects and replaces the old narrow readiness meaning. Only complete validation can report `NODE_BASELINE_READY=true`.
+- The default command and all `audit`, `validate`, and `health` operations are read-only.
+- Existing unmarked content at a managed path is reported as `CONFLICT`.
+- The tool does not delete unknown application data or automatically reboot the host.
+- SSH changes require syntax validation and independent connection proof.
+- Existing host firewall rules are audited and left intact; cloud firewall policy remains external to the host baseline.
+- Routing, IPv6 behavior, MTU, TCP buffer sizing, and congestion-control selection are not modified.
 
 ## Testing
+
+Run the local test suite and package checks:
 
 ```bash
 bash tests/run.sh
@@ -85,10 +156,15 @@ shellcheck -S warning lite-vps-ops bootstrap.sh lib/*.sh tests/*.sh scripts/*.sh
 bash scripts/package.sh
 ```
 
-Tests cover syntax, desired state, ownership/conflict, JSON, snapshots, idempotence, rollback and rollback failure, lock contention, retention, dry-run, receipts and package integrity. CI labels its Debian container check as a platform boundary only. The v1.0.0 release was also validated on a booted Debian 13.7 systemd host with controller-side SSH continuity and unchanged second-apply hashes; see the release notes and execution record for exact evidence.
+The suite covers syntax, profiles, desired state, ownership conflicts, structured output, snapshots, idempotence, rollback, rollback-failure reporting, dry-run, lock contention, retention, receipts, bootstrap cleanup, and package integrity.
 
-## Attribution
+GitHub Actions runs lint, unit, integration, package, secret-scan, and Debian 13 container-boundary jobs. The v1.0.0 release was also validated end to end on a booted Debian 13.7 systemd host, including controller-side SSH continuity, repeated apply, validate, repair, health, release download, and checksum verification.
 
-The design draws on [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening), [Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit), and [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening). The implementation is independent and intentionally excludes broad CIS settings.
+## Project links
 
-MIT licensed. See [LICENSE](LICENSE).
+- [v1.0.0 release](https://github.com/s-qin/lite-vps-ops/releases/tag/v1.0.0)
+- [Changelog](CHANGELOG.md)
+- [Release notes](RELEASE_NOTES.md)
+- [MIT License](LICENSE)
+
+The design draws on ideas from [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening), [Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit), and [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening). The implementation is independent.
