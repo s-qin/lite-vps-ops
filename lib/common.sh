@@ -46,8 +46,6 @@ require_platform() {
   fi
 }
 
-safe_token() { [[ $1 =~ ^[A-Za-z0-9._-]{16,128}$ ]]; }
-
 read_meminfo_kib() {
   local key=$1
   awk -v key="$key" '$1 == key ":" {print $2; found=1} END {if (!found) print 0}' "$(path /proc/meminfo)"

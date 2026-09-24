@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-VERSION=${LVO_VERSION:-v1.1.0}
+VERSION=${LVO_VERSION:-v1.1.1}
 REPO=${LVO_REPO:-s-qin/lite-vps-ops}
 [[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid version' >&2; exit 2; }
 [[ $REPO == s-qin/lite-vps-ops ]] || { echo 'Invalid repository' >&2; exit 2; }

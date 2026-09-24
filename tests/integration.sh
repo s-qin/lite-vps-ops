@@ -17,11 +17,8 @@ snapshot_all
 grep -Fq $'\tpreserved\t-' "$TX_DIR/manifest.tsv"
 (( $(du -sk "$TX_DIR" | awk '{print $1}') < 1024 ))
 apply_managed_configs_except_ssh
-LVO_TEST_SSH_AUTO_CONFIRM=true
-SSH_CONFIRM_TIMEOUT=15
-SSH_CONFIRM_POLL_SECONDS=0
-apply_ssh_with_guard
-[[ $SSH_SAFETY_STATUS == external-confirmed && $SSH_GUARD_STATUS == cancelled-after-confirmation ]]
+apply_ssh_config
+[[ $SSH_APPLY_STATUS == changed-validated ]]
 for file in "${MANAGED_PATHS[@]}"; do [[ $(file_status "$file") == ALREADY_COMPLIANT ]]; done
 first_hash=$(find "$fixture/etc" "$fixture/usr/local/libexec" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
 for file in "${MANAGED_PATHS[@]}"; do [[ $(file_status "$file") == ALREADY_COMPLIANT ]]; done

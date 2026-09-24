@@ -33,5 +33,5 @@ add_check 6 advisory WARN false advisory
 checks_blocking_ok
 add_check 3 required WARN true missing
 if checks_blocking_ok; then echo 'blocking WARN unexpectedly passed' >&2; exit 1; fi
-checks_json | python -m json.tool >/dev/null
+checks_json | test_python -m json.tool >/dev/null
 printf 'PASS unit: resource envelope, desired state, health classification, ownership, status model, JSON\n'

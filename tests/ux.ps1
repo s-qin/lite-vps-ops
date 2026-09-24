@@ -18,5 +18,9 @@ $controllerSource = Get-Content -Raw $controller
 foreach ($mode in @('deploy', 'check', 'audit', 'apply', 'validate', 'repair', 'health')) {
     if ($controllerSource -notmatch "'$mode'") { throw "Controller mode missing: $mode" }
 }
-if ($controllerSource -notmatch '\[string\]\$Version = ''v1\.1\.0''') { throw 'Controller default version mismatch.' }
-Write-Output 'PASS UX: root -Host Deploy/Check and advanced controller modes parse correctly'
+if ($controllerSource -notmatch '\[string\]\$Version = ''v1\.1\.1''') { throw 'Controller default version mismatch.' }
+foreach ($obsolete in @('ssh-blackbox-token', 'ssh-confirm-timeout', 'Start-Job', 'ready gate')) {
+    if ($controllerSource -match [regex]::Escape($obsolete)) { throw "Obsolete SSH confirmation surface remains: $obsolete" }
+}
+if ((Get-Content -Raw $launcher) -match 'TimeoutSeconds') { throw 'Root launcher retains obsolete confirmation timeout.' }
+Write-Output 'PASS UX: root -Host Deploy/Check and synchronous advanced controller modes parse correctly'

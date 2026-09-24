@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-version=v1.1.0
+version=v1.1.1
 name="lite-vps-ops-$version.tar.gz"
 dist="$root/dist"
 mkdir -p "$dist"

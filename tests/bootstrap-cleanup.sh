@@ -29,7 +29,7 @@ while (($#)); do
 done
 [[ -n $output && -n $url ]]
 if [[ $url == *.sha256 ]]; then
-  sed 's/archive.tar.gz/lite-vps-ops-v1.1.0.tar.gz/' "$LVO_TEST_SHA" >"$output"
+  sed 's/archive.tar.gz/lite-vps-ops-v1.1.1.tar.gz/' "$LVO_TEST_SHA" >"$output"
 else
   cp "$LVO_TEST_ARCHIVE" "$output"
 fi

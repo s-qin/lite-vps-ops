@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+test_python() {
+  if command -v python >/dev/null 2>&1; then python "$@"; else python3 "$@"; fi
+}
+
 make_fixture() {
   fixture=$(mktemp -d)
   export fixture

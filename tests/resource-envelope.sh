@@ -30,5 +30,5 @@ profile_resolve
 [[ $RESOURCE_SWAP_TYPE == file ]]
 [[ $TRANSACTION_KEEP -eq 10 ]]
 (( DISK_RESERVE_MIB <= RESOURCE_DISK_FREE_MIB || RESOURCE_FREE_AFTER_RESERVE_MIB == 0 ))
-resource_envelope_json | python -m json.tool >/dev/null
+resource_envelope_json | test_python -m json.tool >/dev/null
 printf 'PASS resource envelope: deterministic, continuous boundary, cgroup/disk/inode/swap inputs\n'

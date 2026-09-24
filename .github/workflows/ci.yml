@@ -30,6 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash tests/integration.sh
+      - run: bash tests/ssh-safety.sh
       - run: bash tests/fault-injection.sh
       - run: bash tests/dry-run.sh
       - run: bash tests/retention-lock.sh
@@ -43,9 +44,9 @@ jobs:
       - name: Verify archive and checksums
         run: |
           cd dist
-          sha256sum -c lite-vps-ops-v1.1.0.tar.gz.sha256
+          sha256sum -c lite-vps-ops-v1.1.1.tar.gz.sha256
           sha256sum -c checksums.txt
-          tar -tzf lite-vps-ops-v1.1.0.tar.gz | grep -Fxq lite-vps-ops
+          tar -tzf lite-vps-ops-v1.1.1.tar.gz | grep -Fxq lite-vps-ops
 
   secret-scan:
     runs-on: ubuntu-latest
