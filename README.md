@@ -1,117 +1,67 @@
 # Lite VPS Ops
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md) · English
 
 [![CI](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml) [![Debian 13](https://img.shields.io/badge/Debian_13-Trixie-A81D33?style=flat&logo=debian&logoColor=white)](https://www.debian.org/releases/trixie/) [![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat&logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/) [![Release](https://img.shields.io/github/v/release/s-qin/lite-vps-ops?display_name=tag&style=flat&logo=github)](https://github.com/s-qin/lite-vps-ops/releases/tag/v1.1.0) [![License](https://img.shields.io/github/license/s-qin/lite-vps-ops?style=flat&logo=opensourceinitiative&logoColor=white)](LICENSE)
 
-Lite VPS Ops is a lightweight tool for host baseline initialization, resilience, security hardening, and health validation on small Debian VPS hosts. Version **v1.1.0** provides a simple PowerShell Deploy/Check experience backed by a transactional Bash engine.
+Lite VPS Ops is a lightweight, idempotent bootstrap, resilience, hardening, and health-baseline tool for **Debian 13 (Trixie)** VPS hosts using systemd and apt on amd64 or arm64. It is designed for small, long-lived servers—typically 512 MiB to a few GiB of RAM and 20–80 GiB disks—not for CIS scoring or application deployment.
+
+Version **1.1.0** implements the complete node baseline through a Shell-first Deploy/Check workflow. The default command remains read-only.
 
 ## Capabilities
 
-- Audits a Debian host, computes an explainable resource envelope, and converges the complete baseline in one transaction.
-- Configures unattended package maintenance, time synchronization, key-only SSH, bounded journald/coredump storage, conservative sysctl settings, emergency swap, tmpfiles policy, and lightweight health checks.
-- Protects SSH changes with an existing connection, an independent second-connection gate, and a post-commit continuity check.
-- Uses ownership guards, snapshots, SHA-256 metadata, atomic writes, a maintenance lock, native validators, rollback, drift repair, and JSON/Markdown receipts.
-- Pulls checksum-protected release assets into temporary staging and removes the program payload after execution.
-
-## Supported platform
-
-- Debian 13 (Trixie)
-- systemd + apt
-- amd64 / arm64
-- A controller with PowerShell and OpenSSH, plus an SSH host alias with passwordless `sudo`
-
-This is the current tested support boundary.
+- Full host audit: OS/kernel/architecture, identity/sudo, boot/uptime, RAM/MemAvailable, swap, load, memory and IO PSI, OOM, root disk/inodes, journal, logrotate/coredump, SSH effective configuration, time sync, unattended upgrades, failed units, pending updates, reboot-required, firewall state, managed drift, state and transaction count.
+- Fresh Debian maintenance: `apt update`, automatic minimal dependencies, unattended upgrades with automatic reboot disabled, and systemd-timesyncd validation.
+- SSH safety: authorized-key access guard, owned `sshd_config.d` drop-in, `sshd -t`, a time-bounded automatic rollback guard, reload, and a second real SSH connection before commit when SSH actually changes. TCP forwarding remains available.
+- Tiny-VPS resilience: a deterministic Resource Envelope derived from memory, MemAvailable, trusted cgroup limits, root disk/free space, inode pressure, and existing swap; emergency swap, conservative swappiness, conflict detection, idempotence and rollback.
+- Disk protection: bounded persistent journald, coredump policy, logrotate, tmpfiles, apt autoclean policy, and owned transaction/backup/receipt retention by count, age, and aggregate bytes.
+- Conservative sysctl: SYN cookies, source-route and redirect protections, protected links, kptr/dmesg restrictions and ptrace scope. It does not set BBR, MTU, TCP buffers, strict rp_filter, `ip_forward`, or IPv6 RA behavior.
+- Long-term operations: read-only `health`, plus an optional daily systemd service/timer. PSI uses multiple windows to distinguish transient from sustained pressure; warnings do not retune the host or restart services.
+- Transactional delivery: ownership guards, SHA-256 snapshots, atomic writes, maintenance lock, native validators, rollback/revalidation, drift repair, versioned state, and JSON/Markdown receipts.
 
 ## Quick start
 
-Clone the release on the controller:
+SSH into the Debian 13 VPS, download the fixed-version bootstrap, and deploy:
 
-```powershell
-git clone --branch v1.1.0 https://github.com/s-qin/lite-vps-ops.git
-cd lite-vps-ops
+```bash
+curl -fL --proto '=https' --tlsv1.2 \
+  -o bootstrap.sh https://github.com/s-qin/lite-vps-ops/releases/download/v1.1.0/bootstrap.sh
+sudo bash bootstrap.sh deploy
 ```
 
-Deploy the complete baseline:
+Deploy performs Audit → Plan → Apply → Validate → Health → Receipt. Bootstrap downloads the matching archive into `mktemp`, verifies SHA-256, runs it, and cleans staging; no Git clone or program source remains on the server.
 
-```powershell
-.\lite-vps-ops.ps1 -Host my-vps
+If deploy changes SSH, it arms an automatic rollback guard and prints one nonce-bound command. Run that command from a second SSH connection using any client. Confirmation cancels the guard; timeout or failure restores the previous SSH configuration. No second connection is requested when SSH already matches the desired state.
+
+Check the committed baseline and current health at any time:
+
+```bash
+sudo bash bootstrap.sh check
 ```
 
-Check the committed baseline and current health:
+## Advanced CLI
 
-```powershell
-.\lite-vps-ops.ps1 -Host my-vps -Check
-```
-
-Deploy downloads the v1.1.0 release, verifies SHA-256, performs pre-audit and planning, applies the transaction, proves SSH continuity, validates the result, runs health, writes a receipt, and removes temporary staging. A successful run ends with `NODE_BASELINE_READY=true`.
-
-The daily health timer is enabled by default. To keep manual health while explicitly disabling scheduled runs:
-
-```powershell
-.\lite-vps-ops.ps1 -Host my-vps -HealthTimer off
-```
-
-The persisted `on` or `off` policy is honored by later repair operations.
-
-## Architecture
-
-The controller downloads `bootstrap.sh` from the selected GitHub Release. Bootstrap creates temporary staging, downloads the matching archive and checksum, verifies the archive, rejects unsafe paths, extracts it, and invokes the Bash engine. Source files and staging are removed on exit.
-
-The engine runs Phase 0–6 audits and one transactional apply path. Managed configuration, state, swap (when created), the health helper/service/timer, transactions, backups, and receipts remain on the host because they are required for validation, repair, rollback, and future upgrades.
-
-## Resource Envelope
-
-`auto` derives deterministic budgets from:
-
-- total and available memory;
-- a trusted cgroup memory limit, when lower than host memory;
-- root filesystem total, free, and used percentage;
-- inode utilization;
-- active swap size and swap type.
-
-It computes bounded swap, journal, coredump, disk reserve, and transaction-retention budgets. Inputs and outputs are included in dry-run, JSON output, state, and receipts. The calculation is continuous across the 2 GiB boundary; it does not switch an entire policy at 2048/2049 MiB.
-
-## Profiles
-
-- `auto` — resource-derived budgets; recommended.
-- `tiny` — explicit low-resource ceilings.
-- `standard` — explicit larger ceilings.
-
-Profiles define policy boundaries. Existing active swap, including a swapfile or partition, is preserved rather than rebuilt.
-
-## Health and timer policy
-
-The health service is a short-lived systemd oneshot. It checks disk, inodes, available memory, swap, OOM events, PSI, time synchronization, failed units, pending updates, reboot-required state, and journal usage.
-
-Memory and I/O PSI use multiple kernel windows and distinguish `INFO`, `WARN_TRANSIENT`, `WARN_SUSTAINED`, and `FAIL`. Health warnings do not change parameters, restart services, or reboot the host. Manual `health` remains available when the timer policy is `off`.
-
-## Advanced and troubleshooting CLI
-
-The v1.0 controller interface remains compatible:
-
-```powershell
-.\controller\lite-vps-ops.ps1 -HostAlias my-vps -Command apply -Version v1.1.0
-.\controller\lite-vps-ops.ps1 -HostAlias my-vps -Command repair -Version v1.1.0
-```
-
-The release Bash engine exposes:
+The release archive exposes the lifecycle API for troubleshooting and automation:
 
 ```text
-lite-vps-ops deploy
-lite-vps-ops check
-lite-vps-ops audit [--json]
-lite-vps-ops apply [--dry-run]
-lite-vps-ops validate [--json]
-lite-vps-ops repair
-lite-vps-ops health [--json]
+lite-vps-ops deploy     # full Audit → Plan → Apply → Validate → Health workflow
+lite-vps-ops check      # validate the baseline and run manual health
+lite-vps-ops audit      # default, read-only
+lite-vps-ops apply      # transactional convergence
+lite-vps-ops validate   # read-only full acceptance
+lite-vps-ops repair     # repair a committed managed baseline
+lite-vps-ops health     # read-only operational health
 ```
 
-Common options are `--profile auto|tiny|standard` and `--health-timer on|off`. SSH-changing operations require the controller-generated `--ssh-blackbox-token`.
+Options include `--profile auto|tiny|standard`, `--health-timer on|off`, `--dry-run`, `--json`, `--version`, `--help`, and `--receipt-dir PATH`. `--ssh-blackbox-token` and `--ssh-confirm-timeout` are optional compatibility/E2E harness controls, not normal deployment requirements. The PowerShell Controller remains available as an optional compatibility and test harness.
+
+`auto` continuously computes bounded Swap, Journal, Coredump, disk-reserve, and transaction budgets. `tiny` and `standard` provide explicit policy ceilings. Existing active swap is preserved rather than rebuilt. Resource inputs and budgets are written to dry-run output, state, and receipts.
+
+The daily health timer defaults to `on`. `--health-timer off` disables scheduled runs while keeping manual health available; the choice is persisted and respected by repair.
 
 ## Persistent objects
 
-Managed system objects include:
+The tool owns only fixed, marked files:
 
 - `/etc/apt/apt.conf.d/52lite-vps-ops-periodic`
 - `/etc/apt/apt.conf.d/53lite-vps-ops-unattended`
@@ -121,40 +71,36 @@ Managed system objects include:
 - `/etc/sysctl.d/60-lite-vps-ops.conf`
 - `/etc/tmpfiles.d/lite-vps-ops.conf`
 - `/usr/local/libexec/lite-vps-ops-health`
-- `/etc/systemd/system/lite-vps-ops-health.service`
-- `/etc/systemd/system/lite-vps-ops-health.timer`
-- `/swapfile` when created by Lite VPS Ops
-- `/var/lib/lite-vps-ops/` state, transactions, backups, and receipts
+- `/etc/systemd/system/lite-vps-ops-health.service` and `.timer`
+- `/swapfile` and one marked `/etc/fstab` block only when no swap already exists
+- `/var/lib/lite-vps-ops/` state, receipts, bounded transactions, and short-lived SSH rollback guards
 
-Transaction retention enforces count, age, and aggregate byte limits. Cleanup is restricted to directly owned Lite VPS Ops transaction directories and never removes the active transaction or unknown user data.
+An existing unmarked target is a `CONFLICT`; unknown business data is never deleted. Retention removes only directly owned Lite VPS Ops transaction directories and never the active transaction. Package installation is additive and is recorded but not automatically removed during rollback. The tool never automatically reboots.
 
-## Safety boundaries
+## Firewall and optional defenses
 
-- Read-only audit, validation, check, health, and dry-run paths do not commit state.
-- Unowned managed paths and unknown swap layouts are reported as conflicts.
-- SSH is never committed without the controller continuity gate.
-- Apply/repair snapshot files, metadata, runtime sysctl values, and timer state before mutation.
-- Rollback restores configuration and the timer's previous enabled/active state, then records the outcome.
-- The tool never automatically reboots the host and does not replace an existing firewall policy.
+Host firewall state is audited. v1.1.0 does not invent a default-deny port allow-list because that could break services, IPv6, cloud firewall policy, or management paths. Existing nftables/UFW rules are not overwritten. Fail2Ban/sshguard, AIDE, full auditd/CIS, PAM/account policy, and application-specific health are optional/out of the default baseline.
 
-## Upgrade from v1.0.0
+## Migration from v1.0.0
 
-Deploy v1.1.0 directly over a committed v1.0.0 baseline. Schema-1 state, SSH proof, existing swap, managed objects, and transaction history are preserved. State is upgraded to schema 2 and records the resource envelope, migration source, and health timer policy. No uninstall step is required.
+Run the v1.1.0 deploy directly over a committed v1.0.0 baseline. Schema-1 state, managed objects, existing swap, transaction history, and SSH continuity evidence are preserved. State migrates to schema 2 and records the Resource Envelope and Health Timer policy. Resource-derived managed values may change; the plan and receipt record the resulting budgets.
 
 ## Testing
 
-The repository tests Bash syntax, ShellCheck, PowerShell parsing, unit behavior, integration, fault injection and rollback, idempotence, schema migration, Deploy/Check wiring, resource-envelope boundaries, count/age/byte retention, timer on/off persistence, transient/sustained health classification, bootstrap cleanup, package integrity, secret scanning, and the Debian 13 container boundary.
+```bash
+bash tests/run.sh
+shellcheck -S warning lite-vps-ops bootstrap.sh lib/*.sh tests/*.sh scripts/*.sh
+bash scripts/package.sh
+```
 
-Release acceptance additionally requires an end-to-end run on a booted Debian 13 systemd host, including v1.0.0 migration, SSH continuity, repeated deployment, Check, timer on/off persistence, checksums, and Remote Pull from the published v1.1.0 Release.
+Tests cover syntax, desired state, ownership/conflict, JSON, snapshots, idempotence, rollback and rollback failure, SSH reconnect success/timeout recovery, lock contention, schema migration, Resource Envelope boundaries, count/age/byte retention, timer policy, transient/sustained health, dry-run, receipts, staging cleanup, and package integrity. CI labels its Debian container check as a platform boundary only. Release acceptance also runs on a booted Debian 13 systemd host through the Shell-first workflow.
 
 ## Planned platform support
 
 Planned support is not current support. Future releases may add independently tested adaptations for Debian 12 (Bookworm), Ubuntu 24.04 LTS, and other Debian/Ubuntu-family systems compatible with the systemd + apt architecture.
 
-## Project links
+## Attribution
 
-- [Changelog](CHANGELOG.md)
-- [v1.1.0 Release Notes](RELEASE_NOTES.md)
-- [Releases](https://github.com/s-qin/lite-vps-ops/releases)
-- [CI](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml)
-- [MIT License](LICENSE)
+The design draws on [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening), [Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit), and [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening). The implementation is independent and intentionally excludes broad CIS settings.
+
+[Changelog](CHANGELOG.md) · [v1.1.0 Release Notes](RELEASE_NOTES.md) · [Releases](https://github.com/s-qin/lite-vps-ops/releases) · [CI](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml) · MIT licensed, see [LICENSE](LICENSE).

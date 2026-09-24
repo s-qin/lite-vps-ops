@@ -1,117 +1,67 @@
 # Lite VPS Ops
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+简体中文 · [English](README.md)
 
 [![CI](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml) [![Debian 13](https://img.shields.io/badge/Debian_13-Trixie-A81D33?style=flat&logo=debian&logoColor=white)](https://www.debian.org/releases/trixie/) [![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat&logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/) [![Release](https://img.shields.io/github/v/release/s-qin/lite-vps-ops?display_name=tag&style=flat&logo=github)](https://github.com/s-qin/lite-vps-ops/releases/tag/v1.1.0) [![License](https://img.shields.io/github/license/s-qin/lite-vps-ops?style=flat&logo=opensourceinitiative&logoColor=white)](LICENSE)
 
-Lite VPS Ops 是面向轻量 Debian VPS 的主机基线初始化、韧性保护、安全加固与健康验收工具。**v1.1.0** 通过简单的 PowerShell Deploy/Check 体验调用具备事务保护的 Bash 引擎。
+Lite VPS Ops 是面向 **Debian 13 (Trixie)**、systemd、apt、amd64/arm64 轻量 VPS 的幂等主机初始化、韧性保护、安全基线与健康验收工具。典型目标为 512 MiB～数 GiB RAM、20～80 GiB 磁盘的长期运行节点；它不是 CIS 打分器，也不部署任何业务。
+
+**v1.1.0** 通过 Shell-first Deploy/Check 工作流交付完整 Node Baseline；默认命令仍保持只读。
 
 ## 能力
 
-- 审计 Debian 主机，计算可解释的 Resource Envelope，并在单个事务中收敛完整基线。
-- 配置无人值守软件包维护、时间同步、仅密钥 SSH、有界 journald/coredump、保守 sysctl、Emergency Swap、tmpfiles 策略与轻量健康检查。
-- 通过现有连接、独立第二连接 Gate 和提交后连续性检查保护 SSH 变更。
-- 使用 ownership guard、snapshot、SHA-256 metadata、原子写、维护锁、原生验证器、回滚、drift repair 和 JSON/Markdown Receipt。
-- 将带 checksum 的 Release 资产拉取到临时 staging，并在执行后清除程序载荷。
-
-## 支持平台
-
-- Debian 13 (Trixie)
-- systemd + apt
-- amd64 / arm64
-- 具有 PowerShell 与 OpenSSH 的控制端，以及配置了免密 `sudo` 的 SSH Host alias
-
-以上是当前已经测试的正式支持边界。
+- 完整审计：OS/Kernel/架构、用户/sudo、boot/uptime、RAM/MemAvailable、Swap、load、memory/IO PSI、OOM、根盘/inode、journal、logrotate/coredump、SSH effective config、时钟、无人值守更新、失败单元、待更新包、reboot-required、防火墙、drift、state 和 transaction。
+- Fresh Debian 维护：`apt update`、最小依赖自动安装、unattended-upgrades、禁止自动 reboot、systemd-timesyncd 验收。
+- SSH 防失联：authorized_keys access guard、owned drop-in、`sshd -t`、有时限的自动 rollback guard、reload，以及仅在 SSH 确实变化时要求提交前建立第二个真实 SSH 会话；保留 TCP forwarding。
+- 小内存韧性：Resource Envelope 综合 RAM、MemAvailable、可信 cgroup limit、根盘总量/剩余空间、inode 压力和现有 Swap，确定性计算应急 Swap 与各项预算；保留冲突处理、幂等与回滚。
+- 磁盘保护：有界 journald、coredump、logrotate、tmpfiles、apt autoclean，以及按 Count + Age + Total Bytes 限制的自有 transaction/backup/receipt retention。
+- 保守 sysctl：SYN cookies、source route/redirect、protected links、kptr/dmesg、ptrace；明确不设置 BBR、MTU、TCP buffer、strict rp_filter、`ip_forward` 或 IPv6 RA。
+- 长期 Ops：只读 `health` 与可选每日 systemd service/timer。PSI 结合多个时间窗口区分 transient/sustained pressure；WARN 不会自动改参数或重启服务。
+- 统一事务：ownership guard、SHA-256 snapshot、原子写、维护锁、原生 validator、rollback/revalidate、repair、版本化 state、JSON/Markdown Receipt。
 
 ## 快速开始
 
-在控制端克隆正式版本：
+SSH 登录 Debian 13 VPS，下载固定版本 bootstrap 并执行 deploy：
 
-```powershell
-git clone --branch v1.1.0 https://github.com/s-qin/lite-vps-ops.git
-cd lite-vps-ops
+```bash
+curl -fL --proto '=https' --tlsv1.2 \
+  -o bootstrap.sh https://github.com/s-qin/lite-vps-ops/releases/download/v1.1.0/bootstrap.sh
+sudo bash bootstrap.sh deploy
 ```
 
-部署完整基线：
+Deploy 在一次运行内完成 Audit → Plan → Apply → Validate → Health → Receipt。Bootstrap 使用 `mktemp` 下载匹配的 Release 归档、校验 SHA-256、执行并清理 staging；服务器无需 Git clone，也不会长期保留程序源码。
 
-```powershell
-.\lite-vps-ops.ps1 -Host my-vps
+如果 deploy 确实修改 SSH，它会武装自动 rollback guard，并打印一条绑定 nonce 的命令。使用任意客户端打开第二条 SSH 连接并执行该命令：确认成功后 guard 被取消；超时或失败会恢复原 SSH 配置。SSH 已符合 Desired State 时不会要求第二连接。
+
+随时检查已提交基线与当前健康状态：
+
+```bash
+sudo bash bootstrap.sh check
 ```
 
-检查已提交基线与当前健康状态：
+## Advanced CLI
 
-```powershell
-.\lite-vps-ops.ps1 -Host my-vps -Check
-```
-
-Deploy 会下载 v1.1.0 Release、校验 SHA-256、执行预审计与计划、应用事务、证明 SSH 连续性、验证结果、运行健康检查、写入 Receipt，并清理临时 staging。成功执行以 `NODE_BASELINE_READY=true` 结束。
-
-每日 Health Timer 默认开启。如需保留手工健康检查但明确关闭定时运行：
-
-```powershell
-.\lite-vps-ops.ps1 -Host my-vps -HealthTimer off
-```
-
-后续 repair 会遵守持久化的 `on` 或 `off` 策略。
-
-## 架构
-
-Controller 从指定 GitHub Release 下载 `bootstrap.sh`。Bootstrap 创建临时 staging，下载匹配的 archive 与 checksum，验证归档、拒绝不安全路径、解压并调用 Bash 引擎。源码和 staging 在退出时清除。
-
-引擎执行 Phase 0–6 审计与单条事务化 apply 路径。Managed Config、State、Swap（由工具创建时）、Health helper/service/timer、Transaction、Backup 与 Receipt 会保留在主机上，用于验证、repair、rollback 与后续升级。
-
-## Resource Envelope
-
-`auto` 根据以下输入计算确定性预算：
-
-- 总内存与可用内存；
-- 低于主机内存时可信的 cgroup memory limit；
-- Root filesystem 的总量、剩余量与使用率；
-- inode 使用率；
-- 已启用 Swap 的大小与类型。
-
-算法计算有界的 Swap、Journal、Coredump、Disk Reserve 与 Transaction Retention 预算。输入与输出写入 dry-run、JSON 输出、State 和 Receipt。计算在 2 GiB 边界保持连续，不会因 2048/2049 MiB 切换整套策略。
-
-## Profiles
-
-- `auto` — 依据资源计算预算，推荐使用。
-- `tiny` — 明确的低资源上限。
-- `standard` — 明确的较大资源上限。
-
-Profile 只定义策略边界。已经启用的 Swap（包括 swapfile 或 partition）会被保留，不会被重建。
-
-## Health 与 Timer 策略
-
-Health service 是短时运行的 systemd oneshot。它检查 Disk、inode、可用内存、Swap、OOM、PSI、时间同步、失败 unit、待更新软件包、reboot-required 与 Journal 用量。
-
-Memory 与 I/O PSI 使用多个内核窗口，区分 `INFO`、`WARN_TRANSIENT`、`WARN_SUSTAINED` 与 `FAIL`。健康告警不会修改参数、重启服务或重启主机。Timer 策略为 `off` 时，手工 `health` 仍然可用。
-
-## Advanced / Troubleshooting CLI
-
-v1.0 Controller 接口保持兼容：
-
-```powershell
-.\controller\lite-vps-ops.ps1 -HostAlias my-vps -Command apply -Version v1.1.0
-.\controller\lite-vps-ops.ps1 -HostAlias my-vps -Command repair -Version v1.1.0
-```
-
-Release 中的 Bash 引擎提供：
+Release 归档保留用于排障与自动化的生命周期 API：
 
 ```text
-lite-vps-ops deploy
-lite-vps-ops check
-lite-vps-ops audit [--json]
-lite-vps-ops apply [--dry-run]
-lite-vps-ops validate [--json]
-lite-vps-ops repair
-lite-vps-ops health [--json]
+lite-vps-ops deploy     # 完整 Audit → Plan → Apply → Validate → Health 闭环
+lite-vps-ops check      # 验证基线并执行手工 health
+lite-vps-ops audit      # 默认，只读
+lite-vps-ops apply      # 事务式收敛
+lite-vps-ops validate   # 只读完整验收
+lite-vps-ops repair     # 修复已提交基线的 drift
+lite-vps-ops health     # 只读运维健康检查
 ```
 
-通用选项包括 `--profile auto|tiny|standard` 与 `--health-timer on|off`。会修改 SSH 的操作需要由 Controller 生成 `--ssh-blackbox-token`。
+选项包括 `--profile auto|tiny|standard`、`--health-timer on|off`、`--dry-run`、`--json`、`--version`、`--help` 和 `--receipt-dir PATH`。`--ssh-blackbox-token` 与 `--ssh-confirm-timeout` 仅是兼容/E2E harness 控制项，不是正常部署前提。PowerShell Controller 保留为可选兼容与测试 Harness。
 
-## 持久对象
+`auto` 连续计算有界的 Swap、Journal、Coredump、Disk Reserve 与 Transaction 预算；`tiny` 和 `standard` 提供明确策略上限。已有 active Swap 会保留而非重建。Resource Envelope 的输入和预算写入 dry-run、state 与 Receipt。
 
-受管系统对象包括：
+每日 Health Timer 默认 `on`。`--health-timer off` 只关闭定时执行，手工 health 始终可用；该选择持久化，repair 会继续尊重它。
+
+## 持久对象与安全边界
+
+工具只拥有以下固定且带 marker 的对象：
 
 - `/etc/apt/apt.conf.d/52lite-vps-ops-periodic`
 - `/etc/apt/apt.conf.d/53lite-vps-ops-unattended`
@@ -121,40 +71,36 @@ lite-vps-ops health [--json]
 - `/etc/sysctl.d/60-lite-vps-ops.conf`
 - `/etc/tmpfiles.d/lite-vps-ops.conf`
 - `/usr/local/libexec/lite-vps-ops-health`
-- `/etc/systemd/system/lite-vps-ops-health.service`
-- `/etc/systemd/system/lite-vps-ops-health.timer`
-- Lite VPS Ops 创建时的 `/swapfile`
-- `/var/lib/lite-vps-ops/` 下的 State、Transaction、Backup 与 Receipt
+- `/etc/systemd/system/lite-vps-ops-health.service` 与 `.timer`
+- 仅在无现有 Swap 时创建的 `/swapfile` 和 `/etc/fstab` 中一个标记 block
+- `/var/lib/lite-vps-ops/` 中的 state、Receipt、有界 transaction 与短期 SSH rollback guard
 
-Transaction Retention 同时执行数量、年龄与总字节上限。清理仅限于具有直接 ownership 证据的 Lite VPS Ops Transaction 目录，绝不会删除当前事务或未知用户数据。
+固定路径已有无 marker 内容时返回 `CONFLICT`；未知业务数据绝不删除。Retention 只删除 Lite VPS Ops 直接拥有的 transaction 目录，且绝不删除当前事务。软件包安装是可审计的加法操作，rollback 默认不自动卸载包。工具绝不自动重启。
 
-## 安全边界
+## Firewall 与 Optional 能力
 
-- 只读 audit、validate、check、health 与 dry-run 不提交 State。
-- 未受管的目标路径和未知 Swap 布局会报告冲突。
-- 未通过 Controller SSH 连续性 Gate 时不会提交 SSH 变更。
-- Apply/repair 在变更前 snapshot 文件、metadata、runtime sysctl 与 Timer 状态。
-- Rollback 恢复配置和 Timer 之前的 enabled/active 状态，并记录结果。
-- 工具不会自动重启主机，也不会替换现有防火墙策略。
+v1.1.0 审计 host firewall，但不会凭空生成 default-deny 端口清单，以免破坏服务、IPv6、云 Firewall 或管理路径；已有 nftables/UFW 不会被覆盖。Fail2Ban/sshguard、AIDE、完整 auditd/CIS、PAM/account 策略和业务健康检查属于 Optional/默认范围外。
 
-## 从 v1.0.0 升级
+## 从 v1.0.0 迁移
 
-可直接在已提交的 v1.0.0 基线上部署 v1.1.0。Schema-1 State、SSH proof、现有 Swap、Managed Object 与 Transaction history 都会保留。State 升级到 schema 2，并记录 Resource Envelope、迁移来源与 Health Timer 策略。无需卸载。
+在已提交的 v1.0.0 基线上直接运行 v1.1.0 deploy。Schema-1 state、受管对象、现有 Swap、transaction history 与 SSH continuity evidence 都会保留；state 原地迁移到 schema 2，并记录 Resource Envelope 与 Health Timer policy。资源预算可能产生受管值变化，plan 与 Receipt 会记录结果。
 
-## 测试
+## 测试与证据
 
-仓库测试覆盖 Bash 语法、ShellCheck、PowerShell 解析、Unit、Integration、Fault Injection 与 Rollback、幂等、Schema Migration、Deploy/Check wiring、Resource Envelope 边界、Count/Age/Byte Retention、Timer on/off 持久化、Transient/Sustained Health 分类、Bootstrap cleanup、Package integrity、Secret Scan 与 Debian 13 Container Boundary。
+```bash
+bash tests/run.sh
+shellcheck -S warning lite-vps-ops bootstrap.sh lib/*.sh tests/*.sh scripts/*.sh
+bash scripts/package.sh
+```
 
-Release 验收还要求在已启动 systemd 的真实 Debian 13 主机执行端到端测试，包括 v1.0.0 迁移、SSH 连续性、重复部署、Check、Timer on/off 持久化、Checksum 与从正式 v1.1.0 Release 进行 Remote Pull。
+测试覆盖语法、Desired State、ownership/conflict、JSON、snapshot、幂等、rollback/rollback failure、SSH reconnect success/timeout recovery、并发锁、schema migration、Resource Envelope 边界、Count/Age/Byte retention、Timer policy、transient/sustained health、dry-run、Receipt、staging cleanup 与归档校验。CI 中 Debian container 明确只是 platform boundary；正式 Release 还必须在 booted Debian 13 systemd 主机完成 Shell-first E2E。
 
 ## 计划支持的平台
 
-计划支持不等于当前支持。未来版本可能为 Debian 12 (Bookworm)、Ubuntu 24.04 LTS，以及其他兼容 systemd + apt 架构的 Debian/Ubuntu 系发行版增加经过独立测试的适配。
+Planned support 不等于 current support。未来版本可考虑在独立测试与适配后支持 Debian 12 (Bookworm)、Ubuntu 24.04 LTS，以及其他兼容当前 systemd + apt 架构的 Debian/Ubuntu 系发行版。
 
-## 项目链接
+## 上游参考
 
-- [Changelog](CHANGELOG.md)
-- [v1.1.0 Release Notes](RELEASE_NOTES.md)
-- [Releases](https://github.com/s-qin/lite-vps-ops/releases)
-- [CI](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml)
-- [MIT License](LICENSE)
+设计参考 [DannyRuizB/debian-hardening](https://github.com/DannyRuizB/debian-hardening)、[Nuver-Labs/vps-audit](https://github.com/Nuver-Labs/vps-audit) 与 [dev-sec/ansible-collection-hardening](https://github.com/dev-sec/ansible-collection-hardening)。本项目独立实现，未引入整套 CIS。
+
+[Changelog](CHANGELOG.md) · [v1.1.0 Release Notes](RELEASE_NOTES.md) · [Releases](https://github.com/s-qin/lite-vps-ops/releases) · [CI](https://github.com/s-qin/lite-vps-ops/actions/workflows/ci.yml) · MIT License，见 [LICENSE](LICENSE)。
