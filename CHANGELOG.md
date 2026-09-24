@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.1 — 2026-09-24
+
+- Remove the mandatory second SSH connection, nonce confirmation, timed wait, rollback-guard units, and related CLI/Controller controls from the normal SSH-changing deploy path.
+- Keep SSH changes inside the standard transaction with authorized-key and ownership preconditions, atomic write, `sshd -t`, reload/active validation, post-apply validation, and rollback/revalidation on failure.
+- Keep schema 2 and migrate committed v1.1.0 state in place, removing obsolete reconnect-proof fields from persistent state while recording the current SSH apply status in each receipt.
+- Preserve the v1.1 Resource Envelope, Health Timer policy, Count/Age/Byte retention, PSI classification, Remote Pull, and staging cleanup behavior.
+
 ## v1.1.0 — 2026-09-24
 
 - Add a Shell-first `deploy` / `check` workflow with an instance-local timed SSH rollback guard and second-connection confirmation only when SSH changes; retain the PowerShell Controller as an optional compatibility and E2E harness.
