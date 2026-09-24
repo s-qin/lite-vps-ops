@@ -7,9 +7,15 @@ make_fixture
 trap 'rm -rf -- "$fixture"' EXIT
 load_fixture
 
+# An existing active swapfile is preserved by reference and never copied into
+# transaction backups or overwritten during rollback.
+truncate -s 2M "$fixture/swapfile"
+
 managed_paths_init
 transaction_begin
 snapshot_all
+grep -Fq $'\tpreserved\t-' "$TX_DIR/manifest.tsv"
+(( $(du -sk "$TX_DIR" | awk '{print $1}') < 1024 ))
 apply_managed_configs_except_ssh
 SSH_BLACKBOX_TOKEN=aaaaaaaaaaaaaaaa
 apply_ssh_with_blackbox

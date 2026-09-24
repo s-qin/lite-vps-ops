@@ -45,11 +45,25 @@ snapshot_one() {
   fi
 }
 
+snapshot_swapfile() {
+  local file=$1
+  if [[ -L $file || ( -e $file && ! -f $file ) ]]; then die "Unsafe snapshot target: $file"; fi
+  if [[ -f $file ]]; then
+    # Existing swap is never modified by apply, and copying an active swapfile is
+    # both wasteful and unsafe to restore while it is in use.
+    printf '%s\tpreserved\t-\t-\t%s\t%s\t%s\n' "$file" "$(stat -c %a "$file")" "$(stat -c %u "$file")" "$(stat -c %g "$file")" >> "$TX_DIR/manifest.tsv"
+  else
+    printf '%s\tabsent\t-\t-\t-\t-\t-\n' "$file" >> "$TX_DIR/manifest.tsv"
+  fi
+}
+
 snapshot_all() {
   managed_paths_init
-  local targets=("${MANAGED_PATHS[@]}" "$(path /etc/fstab)" "$(path /swapfile)" "$(tx_state_dir)/state.json" "$(tx_state_dir)/baseline-version")
+  local swapfile targets=("${MANAGED_PATHS[@]}" "$(path /etc/fstab)" "$(tx_state_dir)/state.json" "$(tx_state_dir)/baseline-version")
+  swapfile=$(path /swapfile)
   local i=0 file
   for file in "${targets[@]}"; do i=$((i + 1)); snapshot_one "$file" "$i"; done
+  snapshot_swapfile "$swapfile"
   : > "$TX_DIR/sysctl-before.tsv"
   if [[ $LVO_TEST_MODE != true ]]; then
     local key value
@@ -104,6 +118,8 @@ rollback_all() {
     [[ -n $file ]] || continue
     if [[ $state == absent ]]; then
       rm -f -- "$file" || TX_ROLLBACK_OK=false
+    elif [[ $state == preserved ]]; then
+      continue
     else
       [[ $(sha_file "$backup") == "$digest" ]] || { TX_ROLLBACK_OK=false; continue; }
       ensure_dir 0755 "$(dirname "$file")"

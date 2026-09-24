@@ -160,7 +160,7 @@ phase4_audit() {
   if (( count <= TRANSACTION_KEEP && bytes_kib * 1024 <= TRANSACTION_MAX_BYTES )); then
     add_check 4 transaction_retention PASS true "count=$count/$TRANSACTION_KEEP bytes_kib=$bytes_kib budget_mib=$TRANSACTION_MAX_MIB"
   else
-    add_check 4 transaction_retention WARN true "count=$count/$TRANSACTION_KEEP bytes_kib=$bytes_kib budget_mib=$TRANSACTION_MAX_MIB"
+    add_check 4 transaction_retention WARN false "count=$count/$TRANSACTION_KEEP bytes_kib=$bytes_kib budget_mib=$TRANSACTION_MAX_MIB; pruned after commit"
   fi
 }
 
