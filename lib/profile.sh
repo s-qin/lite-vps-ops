@@ -156,3 +156,10 @@ resource_envelope_json() {
     "$RESOURCE_SWAP_TOTAL_MIB" "$(json_escape "$RESOURCE_SWAP_TYPE")" "$SWAP_MIB" "$JOURNAL_MIB" "$COREDUMP_MAX_MIB" "$TRANSACTION_KEEP" \
     "$TRANSACTION_MAX_AGE_DAYS" "$TRANSACTION_MAX_MIB"
 }
+
+resource_envelope_state_json() {
+  printf '{"profile":"%s","effective_memory_mib":%s,"cgroup_limit_mib":%s,"disk_total_mib":%s,"disk_reserve_mib":%s,"existing_swap_mib":%s,"swap_type":"%s","swap_budget_mib":%s,"journal_budget_mib":%s,"coredump_budget_mib":%s,"transaction_keep":%s,"transaction_age_days":%s,"transaction_budget_mib":%s}' \
+    "$PROFILE" "$RESOURCE_EFFECTIVE_MEMORY_MIB" "$RESOURCE_CGROUP_LIMIT_MIB" "$RESOURCE_DISK_TOTAL_MIB" "$DISK_RESERVE_MIB" \
+    "$RESOURCE_SWAP_TOTAL_MIB" "$(json_escape "$RESOURCE_SWAP_TYPE")" "$SWAP_MIB" "$JOURNAL_MIB" "$COREDUMP_MAX_MIB" \
+    "$TRANSACTION_KEEP" "$TRANSACTION_MAX_AGE_DAYS" "$TRANSACTION_MAX_MIB"
+}

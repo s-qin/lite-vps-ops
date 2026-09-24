@@ -26,10 +26,13 @@ checks_reset
 add_check 0 migration PASS true migrated
 transaction_commit
 grep -Fq '"health_timer_policy":"off"' "$state"
+grep -Fq '"migration_from":"1.0.0"' "$state"
+if grep -Fq '"mem_available_mib"' "$state"; then echo 'volatile envelope input persisted in state' >&2; exit 1; fi
 
 HEALTH_TIMER_REQUESTED=preserve
 health_timer_policy_resolve
-[[ $HEALTH_TIMER_POLICY == off && $HEALTH_TIMER_POLICY_SOURCE == state ]]
+[[ $HEALTH_TIMER_POLICY == off && $HEALTH_TIMER_POLICY_SOURCE == explicit ]]
+[[ $MIGRATION_FROM == 1.0.0 ]]
 LVO_TEST_TIMER_ENABLED=off
 checks_reset
 phase6_audit

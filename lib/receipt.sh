@@ -16,7 +16,7 @@ write_state() {
   state=$(tx_state_dir)/state.json
   content=$(printf '{"schema_version":%s,"tool":"lite-vps-ops","version":"%s","profile":"%s","health_timer_policy":"%s","health_timer_policy_source":"%s","migration_from":"%s","resource_envelope":%s,"ssh_blackbox_verified":%s,"managed_hashes":%s}\n' \
     "$LVO_SCHEMA_VERSION" "$LVO_VERSION" "$PROFILE" "$HEALTH_TIMER_POLICY" "$HEALTH_TIMER_POLICY_SOURCE" "$MIGRATION_FROM" \
-    "$(resource_envelope_json)" "$SSH_BLACKBOX_PASSED" "$(managed_hashes_json)")
+    "$(resource_envelope_state_json)" "$SSH_BLACKBOX_PASSED" "$(managed_hashes_json)")
   atomic_write_text "$state" 0600 "$content"
 }
 

@@ -8,17 +8,20 @@ HEALTH_TIMER_POLICY_SOURCE=default
 MIGRATION_FROM=none
 
 health_timer_policy_resolve() {
-  local persisted previous schema
+  local persisted persisted_source persisted_migration previous schema
   persisted=$(state_string_value health_timer_policy)
+  persisted_source=$(state_string_value health_timer_policy_source)
+  persisted_migration=$(state_string_value migration_from)
   previous=$(state_string_value version)
   schema=$(state_number_value schema_version)
   # shellcheck disable=SC2034 # receipt.sh consumes this sourced-module value.
-  if [[ -n $previous && $previous != "$LVO_VERSION" ]]; then MIGRATION_FROM=$previous; fi
+  if [[ -n $previous && $previous != "$LVO_VERSION" ]]; then MIGRATION_FROM=$previous
+  elif [[ -n $persisted_migration ]]; then MIGRATION_FROM=$persisted_migration; fi
   case ${HEALTH_TIMER_REQUESTED:-preserve} in
     on|off) HEALTH_TIMER_POLICY=$HEALTH_TIMER_REQUESTED; HEALTH_TIMER_POLICY_SOURCE=explicit ;;
     preserve)
       if [[ $persisted == on || $persisted == off ]]; then
-        HEALTH_TIMER_POLICY=$persisted; HEALTH_TIMER_POLICY_SOURCE=state
+        HEALTH_TIMER_POLICY=$persisted; HEALTH_TIMER_POLICY_SOURCE=${persisted_source:-state}
       elif [[ -n $schema ]]; then
         HEALTH_TIMER_POLICY=on; HEALTH_TIMER_POLICY_SOURCE="schema-${schema}-default"
       else
