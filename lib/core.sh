@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LVO_VERSION=1.0.0
-LVO_SCHEMA_VERSION=1
+LVO_VERSION=1.1.0
+LVO_SCHEMA_VERSION=2
 LVO_ROOT=${LVO_ROOT:-}
 LVO_TEST_MODE=${LVO_TEST_MODE:-false}
 LVO_STATE_DIR=${LVO_STATE_DIR:-/var/lib/lite-vps-ops}
@@ -17,6 +17,8 @@ LIB_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 . "$LIB_DIR/profile.sh"
 # shellcheck source=lib/checks.sh
 . "$LIB_DIR/checks.sh"
+# shellcheck source=lib/health.sh
+. "$LIB_DIR/health.sh"
 # shellcheck source=lib/config.sh
 . "$LIB_DIR/config.sh"
 # shellcheck source=lib/transaction.sh

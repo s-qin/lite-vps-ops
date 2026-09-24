@@ -62,3 +62,24 @@ percent_used() {
     df -P / | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
   fi
 }
+
+read_file_privileged() {
+  local file=$1
+  if [[ -r $file ]]; then cat "$file"
+  elif sudo -n test -r "$file" 2>/dev/null; then sudo -n cat "$file"
+  fi
+}
+
+state_string_value() {
+  local key=$1 state content
+  state="$(path "$LVO_STATE_DIR")/state.json"
+  content=$(read_file_privileged "$state" 2>/dev/null || true)
+  sed -n 's/.*"'"$key"'":"\([^"]*\)".*/\1/p' <<< "$content" | head -n1
+}
+
+state_number_value() {
+  local key=$1 state content
+  state="$(path "$LVO_STATE_DIR")/state.json"
+  content=$(read_file_privileged "$state" 2>/dev/null || true)
+  sed -n 's/.*"'"$key"'":\([0-9][0-9]*\).*/\1/p' <<< "$content" | head -n1
+}

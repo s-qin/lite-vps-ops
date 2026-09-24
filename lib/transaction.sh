@@ -17,6 +17,8 @@ transaction_begin() {
   RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
   TX_DIR="$state/transactions/$RUN_ID"
   ensure_dir 0700 "$TX_DIR/backups"
+  printf '{"tool":"lite-vps-ops","run_id":"%s"}\n' "$(json_escape "$RUN_ID")" > "$TX_DIR/owner.json"
+  chmod 0600 "$TX_DIR/owner.json"
   : > "$TX_DIR/manifest.tsv"
   : > "$TX_DIR/actions.log"
   TX_ACTIVE=true
@@ -60,6 +62,12 @@ snapshot_all() {
     done < <(desired_config "$(path /etc/sysctl.d/60-lite-vps-ops.conf)")
   fi
   sha256sum "$TX_DIR/manifest.tsv" | awk '{print $1}' > "$TX_DIR/manifest.sha256"
+  if [[ $LVO_TEST_MODE == true ]]; then
+    printf '%s\t%s\n' "${LVO_TEST_TIMER_ENABLED_BEFORE:-disabled}" "${LVO_TEST_TIMER_ACTIVE_BEFORE:-inactive}" > "$TX_DIR/timer-before.tsv"
+  else
+    printf '%s\t%s\n' "$(systemctl is-enabled lite-vps-ops-health.timer 2>/dev/null || printf disabled)" \
+      "$(systemctl is-active lite-vps-ops-health.timer 2>/dev/null || printf inactive)" > "$TX_DIR/timer-before.tsv"
+  fi
 }
 
 atomic_write_managed() {
@@ -92,9 +100,6 @@ rollback_all() {
   if [[ -f $TX_DIR/actions.log ]] && grep -Fq $'SWAPON\t' "$TX_DIR/actions.log" && [[ $LVO_TEST_MODE != true ]]; then
     swapoff "$(path /swapfile)" >/dev/null 2>&1 || TX_ROLLBACK_OK=false
   fi
-  if [[ -f $TX_DIR/actions.log ]] && grep -Fq $'ENABLE_TIMER\t' "$TX_DIR/actions.log" && [[ $LVO_TEST_MODE != true ]]; then
-    systemctl disable --now lite-vps-ops-health.timer >/dev/null 2>&1 || TX_ROLLBACK_OK=false
-  fi
   while IFS=$'\t' read -r file state backup digest mode uid gid; do
     [[ -n $file ]] || continue
     if [[ $state == absent ]]; then
@@ -109,6 +114,12 @@ rollback_all() {
   done < "$TX_DIR/manifest.tsv"
   if [[ $LVO_TEST_MODE != true ]]; then
     systemctl daemon-reload >/dev/null 2>&1 || TX_ROLLBACK_OK=false
+    local timer_enabled=disabled timer_active=inactive
+    if [[ -f $TX_DIR/timer-before.tsv ]]; then IFS=$'\t' read -r timer_enabled timer_active < "$TX_DIR/timer-before.tsv"; fi
+    if [[ $timer_enabled == enabled ]]; then systemctl enable lite-vps-ops-health.timer >/dev/null 2>&1 || TX_ROLLBACK_OK=false
+    else systemctl disable lite-vps-ops-health.timer >/dev/null 2>&1 || TX_ROLLBACK_OK=false; fi
+    if [[ $timer_active == active ]]; then systemctl start lite-vps-ops-health.timer >/dev/null 2>&1 || TX_ROLLBACK_OK=false
+    else systemctl stop lite-vps-ops-health.timer >/dev/null 2>&1 || TX_ROLLBACK_OK=false; fi
     systemctl try-restart systemd-journald.service >/dev/null 2>&1 || TX_ROLLBACK_OK=false
     while IFS=$'\t' read -r key value; do
       [[ -n $key ]] || continue
@@ -151,15 +162,46 @@ transaction_commit() {
 }
 
 prune_transactions() {
-  local root current count dir
+  local root current count dir total_kib max_kib
   root="$(tx_state_dir)/transactions"; current=${TX_DIR:-}
   [[ -d $root ]] || return 0
   while IFS= read -r dir; do
-    [[ $dir == "$current" ]] || rm -rf -- "$dir"
+    if [[ $dir != "$current" ]] && transaction_owned_dir "$dir"; then rm -rf -- "$dir"; fi
   done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -mtime "+$TRANSACTION_MAX_AGE_DAYS" -print 2>/dev/null)
   count=0
   while IFS= read -r dir; do
+    transaction_owned_dir "$dir" || continue
     count=$((count + 1))
     if (( count > TRANSACTION_KEEP )) && [[ $dir != "$current" ]]; then rm -rf -- "$dir"; fi
   done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+  max_kib=$(( TRANSACTION_MAX_BYTES / 1024 ))
+  total_kib=$(transactions_owned_kib "$root")
+  while (( total_kib > max_kib )); do
+    dir=
+    while IFS= read -r dir; do
+      transaction_owned_dir "$dir" && [[ $dir != "$current" ]] && break
+      dir=
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null | sort -n | cut -d' ' -f2-)
+    [[ -n $dir ]] || break
+    rm -rf -- "$dir"
+    total_kib=$(transactions_owned_kib "$root")
+  done
+}
+
+transaction_owned_dir() {
+  local dir=$1 root
+  root="$(tx_state_dir)/transactions"
+  [[ -d $dir && ! -L $dir && $(dirname "$dir") == "$root" ]] || return 1
+  [[ -f $dir/owner.json ]] && grep -Fq '"tool":"lite-vps-ops"' "$dir/owner.json" && return 0
+  [[ -f $dir/receipt.json && -f $dir/manifest.sha256 ]] && grep -Fq '"tool":"lite-vps-ops"' "$dir/receipt.json"
+}
+
+transactions_owned_kib() {
+  local root=$1 dir total=0 size
+  while IFS= read -r dir; do
+    transaction_owned_dir "$dir" || continue
+    size=$(du -sk -- "$dir" 2>/dev/null | awk '{print $1}')
+    total=$(( total + ${size:-0} ))
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null)
+  printf '%s' "$total"
 }

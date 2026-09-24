@@ -10,13 +10,14 @@ Usage: lite-vps-ops [audit|apply|validate|repair|health] [options]
 
 Commands:
   audit      Read-only full host and managed-state audit (default)
-  apply      Converge all v1 baseline phases in one transaction
+  apply      Converge all baseline phases in one transaction
   validate   Read-only full node-baseline acceptance
   repair     Repair drift for a previously committed v1 baseline
   health     Read-only operational health check
 
 Options:
   --profile auto|tiny|standard
+  --health-timer on|off        Set the persisted timer policy (default: preserve or on)
   --dry-run
   --json
   --ssh-blackbox-token TOKEN   Controller-only SSH continuity proof
@@ -34,12 +35,15 @@ DRY_RUN=false
 JSON=false
 SSH_BLACKBOX_TOKEN=
 RECEIPT_DIR=
+HEALTH_TIMER_REQUESTED=preserve
 
 if (( $# )) && [[ $1 != -* ]]; then MODE=$1; shift; fi
 case "$MODE" in audit|apply|validate|repair|health) ;; *) usage >&2; exit 2 ;; esac
 while (( $# )); do
   case "$1" in
     --profile) [[ $# -ge 2 ]] || die '--profile needs a value'; PROFILE=$2; shift 2 ;;
+    --health-timer) [[ $# -ge 2 ]] || die '--health-timer needs a value'; HEALTH_TIMER_REQUESTED=$2; shift 2 ;;
+    --health-timer=*) HEALTH_TIMER_REQUESTED=${1#*=}; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     --json) JSON=true; shift ;;
     --ssh-blackbox-token) [[ $# -ge 2 ]] || die '--ssh-blackbox-token needs a value'; SSH_BLACKBOX_TOKEN=$2; shift 2 ;;
@@ -51,16 +55,18 @@ while (( $# )); do
 done
 
 [[ $PROFILE == auto || $PROFILE == tiny || $PROFILE == standard ]] || die 'Invalid profile'
+[[ $HEALTH_TIMER_REQUESTED == preserve || $HEALTH_TIMER_REQUESTED == on || $HEALTH_TIMER_REQUESTED == off ]] || die 'Invalid --health-timer value'
 [[ $JSON == false || $MODE == audit || $MODE == validate || $MODE == health ]] || die '--json is only valid for read-only commands'
 [[ -z $SSH_BLACKBOX_TOKEN || $MODE == apply || $MODE == repair ]] || die '--ssh-blackbox-token is only valid for apply/repair'
 require_platform
 profile_resolve
+health_timer_policy_resolve
 
 case "$MODE" in
   audit)
     run_all_checks
     if [[ $JSON == true ]]; then
-      printf '{"tool":"lite-vps-ops","version":"%s","mode":"audit","profile":"%s","checks":%s,"node_baseline_ready":false}\n' "$LVO_VERSION" "$PROFILE" "$(checks_json)"
+      printf '{"tool":"lite-vps-ops","version":"%s","mode":"audit","profile":"%s","health_timer_policy":"%s","resource_envelope":%s,"checks":%s,"node_baseline_ready":false}\n' "$LVO_VERSION" "$PROFILE" "$HEALTH_TIMER_POLICY" "$(resource_envelope_json)" "$(checks_json)"
     else
       say "Lite VPS Ops $LVO_VERSION | audit | profile=$PROFILE | READ_ONLY=true"
       checks_human
@@ -71,7 +77,7 @@ case "$MODE" in
     run_all_checks
     ready=false; checks_blocking_ok && ready=true
     if [[ $JSON == true ]]; then
-      printf '{"tool":"lite-vps-ops","version":"%s","mode":"validate","profile":"%s","checks":%s,"node_baseline_ready":%s}\n' "$LVO_VERSION" "$PROFILE" "$(checks_json)" "$ready"
+      printf '{"tool":"lite-vps-ops","version":"%s","mode":"validate","profile":"%s","health_timer_policy":"%s","resource_envelope":%s,"checks":%s,"node_baseline_ready":%s}\n' "$LVO_VERSION" "$PROFILE" "$HEALTH_TIMER_POLICY" "$(resource_envelope_json)" "$(checks_json)" "$ready"
     else
       checks_human; say "NODE_BASELINE_READY=$ready"
     fi
@@ -80,7 +86,7 @@ case "$MODE" in
   health)
     if [[ $JSON == true ]]; then
       run_all_checks; ready=false; checks_blocking_ok && ready=true
-      printf '{"tool":"lite-vps-ops","version":"%s","mode":"health","profile":"%s","checks":%s,"healthy":%s}\n' "$LVO_VERSION" "$PROFILE" "$(checks_json)" "$ready"
+      printf '{"tool":"lite-vps-ops","version":"%s","mode":"health","profile":"%s","health_timer_policy":"%s","resource_envelope":%s,"checks":%s,"healthy":%s}\n' "$LVO_VERSION" "$PROFILE" "$HEALTH_TIMER_POLICY" "$(resource_envelope_json)" "$(checks_json)" "$ready"
       [[ $ready == true ]]
     else health_command; fi
     ;;

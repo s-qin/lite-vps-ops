@@ -3,6 +3,31 @@
 SSH_BLACKBOX_PASSED=false
 PACKAGE_ACTION=none
 SWAP_ACTION=none
+HEALTH_TIMER_POLICY=on
+HEALTH_TIMER_POLICY_SOURCE=default
+MIGRATION_FROM=none
+
+health_timer_policy_resolve() {
+  local persisted previous schema
+  persisted=$(state_string_value health_timer_policy)
+  previous=$(state_string_value version)
+  schema=$(state_number_value schema_version)
+  # shellcheck disable=SC2034 # receipt.sh consumes this sourced-module value.
+  if [[ -n $previous && $previous != "$LVO_VERSION" ]]; then MIGRATION_FROM=$previous; fi
+  case ${HEALTH_TIMER_REQUESTED:-preserve} in
+    on|off) HEALTH_TIMER_POLICY=$HEALTH_TIMER_REQUESTED; HEALTH_TIMER_POLICY_SOURCE=explicit ;;
+    preserve)
+      if [[ $persisted == on || $persisted == off ]]; then
+        HEALTH_TIMER_POLICY=$persisted; HEALTH_TIMER_POLICY_SOURCE=state
+      elif [[ -n $schema ]]; then
+        HEALTH_TIMER_POLICY=on; HEALTH_TIMER_POLICY_SOURCE="schema-${schema}-default"
+      else
+        HEALTH_TIMER_POLICY=on; HEALTH_TIMER_POLICY_SOURCE=default
+      fi
+      ;;
+    *) die 'Invalid health timer policy: use on or off' ;;
+  esac
+}
 
 package_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -Fq 'install ok installed'; }
 
@@ -126,10 +151,17 @@ phase4_audit() {
   managed_file_check 4 coredump_policy "$(path /etc/systemd/coredump.conf.d/60-lite-vps-ops.conf)"
   managed_file_check 4 tmpfiles_policy "$(path /etc/tmpfiles.d/lite-vps-ops.conf)"
   if [[ $LVO_TEST_MODE == true ]] || package_installed logrotate; then add_check 4 logrotate PASS true 'installed'; else add_check 4 logrotate FAIL true 'package missing'; fi
-  local count=0
-  if [[ -d $(tx_state_dir)/transactions && -r $(tx_state_dir)/transactions ]]; then count=$(find "$(tx_state_dir)/transactions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
-  elif sudo -n test -d "$(tx_state_dir)/transactions" 2>/dev/null; then count=$(sudo -n find "$(tx_state_dir)/transactions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l); fi
-  (( count <= TRANSACTION_KEEP )) && add_check 4 transaction_retention PASS true "count=$count keep=$TRANSACTION_KEEP" || add_check 4 transaction_retention WARN true "count=$count keep=$TRANSACTION_KEEP"
+  local count=0 bytes_kib=0 root dir
+  root="$(tx_state_dir)/transactions"
+  if [[ -d $root && -r $root ]]; then
+    while IFS= read -r dir; do transaction_owned_dir "$dir" || continue; count=$((count + 1)); done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+    bytes_kib=$(transactions_owned_kib "$root")
+  fi
+  if (( count <= TRANSACTION_KEEP && bytes_kib * 1024 <= TRANSACTION_MAX_BYTES )); then
+    add_check 4 transaction_retention PASS true "count=$count/$TRANSACTION_KEEP bytes_kib=$bytes_kib budget_mib=$TRANSACTION_MAX_MIB"
+  else
+    add_check 4 transaction_retention WARN true "count=$count/$TRANSACTION_KEEP bytes_kib=$bytes_kib budget_mib=$TRANSACTION_MAX_MIB"
+  fi
 }
 
 phase5_audit() {
@@ -153,8 +185,18 @@ phase6_audit() {
   managed_file_check 6 health_runner "$(path /usr/local/libexec/lite-vps-ops-health)"
   managed_file_check 6 health_service "$(path /etc/systemd/system/lite-vps-ops-health.service)"
   managed_file_check 6 health_timer "$(path /etc/systemd/system/lite-vps-ops-health.timer)"
-  if [[ $LVO_TEST_MODE == true ]]; then add_check 6 timer_active PASS true 'test fixture'; add_check 6 firewall WARN false 'audit-only conservative policy'; return; fi
-  if systemctl is-enabled --quiet lite-vps-ops-health.timer && systemctl is-active --quiet lite-vps-ops-health.timer; then add_check 6 timer_active PASS true 'enabled and active'; else add_check 6 timer_active FAIL true 'not enabled/active'; fi
+  if [[ $LVO_TEST_MODE == true ]]; then
+    local test_timer=${LVO_TEST_TIMER_ENABLED:-$HEALTH_TIMER_POLICY}
+    [[ $test_timer == "$HEALTH_TIMER_POLICY" ]] && add_check 6 timer_policy PASS true "policy=$HEALTH_TIMER_POLICY source=$HEALTH_TIMER_POLICY_SOURCE" || add_check 6 timer_policy FAIL true "policy=$HEALTH_TIMER_POLICY actual=$test_timer"
+    add_check 6 firewall WARN false 'audit-only conservative policy'; return
+  fi
+  if [[ $HEALTH_TIMER_POLICY == on ]]; then
+    if systemctl is-enabled --quiet lite-vps-ops-health.timer && systemctl is-active --quiet lite-vps-ops-health.timer; then add_check 6 timer_policy PASS true 'policy=on enabled and active'; else add_check 6 timer_policy FAIL true 'policy=on but not enabled/active'; fi
+  elif ! systemctl is-enabled --quiet lite-vps-ops-health.timer && ! systemctl is-active --quiet lite-vps-ops-health.timer; then
+    add_check 6 timer_policy PASS true 'policy=off disabled and inactive; manual health available'
+  else
+    add_check 6 timer_policy FAIL true 'policy=off but timer enabled or active'
+  fi
   if has nft && nft list ruleset 2>/dev/null | grep -qE 'hook input|type filter'; then add_check 6 firewall PASS false 'existing host firewall detected; not overwritten'
   elif has ufw && ufw status 2>/dev/null | grep -Fq 'Status: active'; then add_check 6 firewall PASS false 'active ufw detected; not overwritten'
   else add_check 6 firewall WARN false 'no host firewall; cloud firewall remains external boundary'; fi
@@ -226,8 +268,13 @@ activate_services() {
   systemctl try-restart systemd-journald.service
   systemctl enable --now systemd-timesyncd.service
   systemctl enable --now unattended-upgrades.service
-  printf 'ENABLE_TIMER\tlite-vps-ops-health.timer\n' >> "$TX_DIR/actions.log"
-  systemctl enable --now lite-vps-ops-health.timer
+  if [[ $HEALTH_TIMER_POLICY == on ]]; then
+    printf 'TIMER_POLICY\ton\n' >> "$TX_DIR/actions.log"
+    systemctl enable --now lite-vps-ops-health.timer
+  else
+    printf 'TIMER_POLICY\toff\n' >> "$TX_DIR/actions.log"
+    systemctl disable --now lite-vps-ops-health.timer
+  fi
   systemctl start lite-vps-ops-health.service
 }
 
@@ -300,6 +347,7 @@ apply_or_repair() {
 }
 
 dry_run_plan() {
+  resource_envelope_human
   config_plan || die 'Plan contains CONFLICT'
   local swap_total
   swap_total=$(read_meminfo_kib SwapTotal)
