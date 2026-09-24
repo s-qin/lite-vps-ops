@@ -23,6 +23,7 @@ jobs:
       - run: bash tests/resource-envelope.sh
       - run: bash tests/migration-timer.sh
       - run: bash tests/receipt.sh
+      - run: pwsh -NoProfile -File tests/ux.ps1
 
   integration:
     runs-on: ubuntu-latest

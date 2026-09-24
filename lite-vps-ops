@@ -6,9 +6,11 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 usage() {
   cat <<'EOF'
-Usage: lite-vps-ops [audit|apply|validate|repair|health] [options]
+Usage: lite-vps-ops [deploy|check|audit|apply|validate|repair|health] [options]
 
 Commands:
+  deploy     Audit, plan, apply, validate, health, and write a receipt
+  check      Validate the baseline and run the manual health check
   audit      Read-only full host and managed-state audit (default)
   apply      Converge all baseline phases in one transaction
   validate   Read-only full node-baseline acceptance
@@ -38,7 +40,7 @@ RECEIPT_DIR=
 HEALTH_TIMER_REQUESTED=preserve
 
 if (( $# )) && [[ $1 != -* ]]; then MODE=$1; shift; fi
-case "$MODE" in audit|apply|validate|repair|health) ;; *) usage >&2; exit 2 ;; esac
+case "$MODE" in deploy|check|audit|apply|validate|repair|health) ;; *) usage >&2; exit 2 ;; esac
 while (( $# )); do
   case "$1" in
     --profile) [[ $# -ge 2 ]] || die '--profile needs a value'; PROFILE=$2; shift 2 ;;
@@ -56,13 +58,30 @@ done
 
 [[ $PROFILE == auto || $PROFILE == tiny || $PROFILE == standard ]] || die 'Invalid profile'
 [[ $HEALTH_TIMER_REQUESTED == preserve || $HEALTH_TIMER_REQUESTED == on || $HEALTH_TIMER_REQUESTED == off ]] || die 'Invalid --health-timer value'
-[[ $JSON == false || $MODE == audit || $MODE == validate || $MODE == health ]] || die '--json is only valid for read-only commands'
-[[ -z $SSH_BLACKBOX_TOKEN || $MODE == apply || $MODE == repair ]] || die '--ssh-blackbox-token is only valid for apply/repair'
+[[ $JSON == false || $MODE == audit || $MODE == validate || $MODE == health ]] || die '--json is only valid for audit/validate/health'
+[[ -z $SSH_BLACKBOX_TOKEN || $MODE == deploy || $MODE == apply || $MODE == repair ]] || die '--ssh-blackbox-token is only valid for deploy/apply/repair'
 require_platform
 profile_resolve
 health_timer_policy_resolve
 
 case "$MODE" in
+  deploy)
+    say "Lite VPS Ops $LVO_VERSION | deploy pre-audit | READ_ONLY=true"
+    run_all_checks
+    checks_human
+    dry_run_plan
+    apply_or_repair
+    health_command
+    say 'NODE_BASELINE_READY=true'
+    ;;
+  check)
+    run_all_checks
+    ready=false; checks_blocking_ok && ready=true
+    checks_human
+    [[ $ready == true ]] || { say 'NODE_BASELINE_READY=false'; exit 1; }
+    health_command
+    say 'NODE_BASELINE_READY=true'
+    ;;
   audit)
     run_all_checks
     if [[ $JSON == true ]]; then

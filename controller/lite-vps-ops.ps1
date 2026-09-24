@@ -4,7 +4,7 @@ param(
     [string]$HostAlias,
     [ValidateSet('tiny', 'standard', 'auto')]
     [string]$Profile = 'auto',
-    [ValidateSet('audit', 'apply', 'validate', 'repair', 'health')]
+    [ValidateSet('deploy', 'check', 'audit', 'apply', 'validate', 'repair', 'health')]
     [string]$Command = 'apply',
     [string]$Version = 'v1.1.0',
     [ValidateSet('preserve', 'on', 'off')]
@@ -21,7 +21,7 @@ $bootstrap = "https://github.com/s-qin/lite-vps-ops/releases/download/$Version/b
 $timerArgument = if ($HealthTimer -eq 'preserve') { '' } else { " --health-timer $HealthTimer" }
 $remoteBase = "set -eu; if ! command -v curl >/dev/null 2>&1; then sudo -n apt-get update; sudo -n apt-get install -y --no-install-recommends ca-certificates curl; fi; d=`$(mktemp -d); trap 'rm -rf -- `"`$d`"' EXIT; curl -fL --proto '=https' --tlsv1.2 -o `"`$d/bootstrap.sh`" '$bootstrap'; sudo -n bash `"`$d/bootstrap.sh`" $Command --profile $Profile$timerArgument"
 
-if ($Command -notin @('apply', 'repair')) {
+if ($Command -notin @('deploy', 'apply', 'repair')) {
     & ssh -o BatchMode=yes -o ConnectTimeout=10 $HostAlias $remoteBase
     if ($LASTEXITCODE -ne 0) { throw "Remote $Command exited $LASTEXITCODE" }
     exit 0
