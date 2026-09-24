@@ -1,14 +1,16 @@
 # Changelog
 
-## v1.0.0
+## v1.1.0 — 2026-09-24
 
-- Release the complete Debian 13 Phase 0–7 node baseline.
-- Add read-only audit, validation, repair, and operational health commands.
-- Add Debian package maintenance, unattended-upgrade policy, and time validation.
-- Add controller-proved SSH hardening with transactional rollback.
-- Add resource-aware emergency swap and memory-pressure checks.
-- Add bounded journald, coredump, tmpfiles, apt cache, and transaction storage.
-- Add a conservative sysctl baseline and daily systemd health timer.
-- Add versioned state, drift detection, structured receipts, maintenance locking, rollback, and revalidation.
-- Add layered lint, unit, integration, fault-injection, idempotence, dry-run, receipt, bootstrap-cleanup, package, and secret-scan checks.
-- Validate the release on a booted Debian 13.7 systemd host with independent SSH continuity and Release Pull verification.
+- Add root-level PowerShell Deploy and Check workflows while preserving the v1.0 controller interface and advanced Bash commands.
+- Replace the 2 GiB auto-profile split with a deterministic Resource Envelope covering memory, cgroup limits, disk capacity/free space, inode utilization, and existing swap.
+- Add a persisted Health Timer `on|off` policy; default to `on`, retain manual health, and preserve explicit `off` during repair.
+- Add aggregate byte limits to count/age transaction retention with strict ownership checks.
+- Classify PSI as informational, transient, or sustained to reduce single-sample health noise.
+- Upgrade state and receipts to schema 2 with migration, timer, retention, and resource-budget evidence.
+- Add migration, boundary, timer-policy, retention-budget, package, rollback, and Deploy/Check tests.
+
+## v1.0.0 — 2026-09-23
+
+- Initial production release for Debian 13 on amd64 and arm64.
+- Transactional host baseline, SSH continuity gate, emergency swap, bounded logs/coredumps, conservative sysctl policy, health timer, drift repair, rollback, and structured receipts.
