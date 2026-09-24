@@ -8,8 +8,13 @@ trap 'rm -rf -- "$fixture"' EXIT
 load_fixture
 
 [[ $PROFILE == tiny ]]
-[[ $JOURNAL_MIB == 64 ]]
+[[ $JOURNAL_MIB == 56 ]]
 [[ $SWAP_MIB == 512 ]]
+[[ $RESOURCE_SWAP_TYPE == partition ]]
+[[ $TRANSACTION_MAX_BYTES == 67108864 ]]
+[[ $(health_classify_psi memory 6.0 0.1 0.1) == WARN_TRANSIENT ]]
+[[ $(health_classify_psi memory 1.0 2.1 0.1) == WARN_SUSTAINED ]]
+[[ $(health_classify_psi io 0.4 0.1 0.1) == PASS ]]
 [[ $(json_escape $'a"b\\c\n') == 'a\"b\\c\n' ]]
 
 managed_paths_init
@@ -29,4 +34,4 @@ checks_blocking_ok
 add_check 3 required WARN true missing
 if checks_blocking_ok; then echo 'blocking WARN unexpectedly passed' >&2; exit 1; fi
 checks_json | python -m json.tool >/dev/null
-printf 'PASS unit: profiles, desired state, ownership, status model, JSON\n'
+printf 'PASS unit: resource envelope, desired state, health classification, ownership, status model, JSON\n'

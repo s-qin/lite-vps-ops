@@ -19,9 +19,12 @@ python - "$TX_DIR/receipt.json" <<'PY'
 import json, pathlib, sys
 p = pathlib.Path(sys.argv[1])
 d = json.loads(p.read_text())
-assert d["schema_version"] == 1
+assert d["schema_version"] == 2
 assert d["node_baseline_ready"] is True
 assert d["ssh_blackbox_verified"] is True
+assert d["health_timer_policy"] == "on"
+assert d["resource_envelope"]["transaction_budget_mib"] == 64
+assert d["retention"]["max_bytes"] == 67108864
 assert d["checks"][0]["status"] == "PASS"
 PY
 TX_ACTIVE=false

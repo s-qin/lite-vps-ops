@@ -23,6 +23,10 @@ EOF
   cat > "$fixture/proc/vmstat" <<'EOF'
 oom_kill 0
 EOF
+  cat > "$fixture/proc/swaps" <<'EOF'
+Filename                                Type            Size            Used            Priority
+/dev/vda2                               partition       524284          0               -2
+EOF
   printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$fixture/proc/pressure/memory"
   printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$fixture/proc/pressure/io"
   printf '0.00 0.00 0.00 1/1 1\n' > "$fixture/proc/loadavg"
@@ -41,7 +45,9 @@ load_fixture() {
   SCRIPT_DIR=$root
   PROFILE=tiny
   MODE=apply
+  HEALTH_TIMER_REQUESTED=preserve
   # shellcheck source=lib/core.sh
   . "$root/lib/core.sh"
   profile_resolve
+  health_timer_policy_resolve
 }
