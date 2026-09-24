@@ -154,6 +154,7 @@ transaction_abort() {
   trap - EXIT INT TERM
   # shellcheck disable=SC2034 # consumed by receipt.sh after all modules are sourced
   TX_ROLLBACK=true
+  if declare -F ssh_guard_abort_active >/dev/null; then ssh_guard_abort_active; fi
   if rollback_all; then
     receipt_write FAIL false || true
   else

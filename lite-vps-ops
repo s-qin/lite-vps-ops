@@ -22,12 +22,14 @@ Options:
   --health-timer on|off        Set the persisted timer policy (default: preserve or on)
   --dry-run
   --json
-  --ssh-blackbox-token TOKEN   Controller-only SSH continuity proof
+  --ssh-blackbox-token TOKEN   Optional external harness token (compatibility)
+  --ssh-confirm-timeout SEC    SSH reconnect window (15-600; default: 120)
   --receipt-dir PATH           Copy the final receipt after commit
   --version
   --help
 
-SSH-changing apply operations must be launched through controller/lite-vps-ops.ps1.
+When SSH changes, deploy arms an automatic rollback guard and asks for a
+confirmation from a second SSH connection. No specific client is required.
 EOF
 }
 
@@ -49,6 +51,7 @@ while (( $# )); do
     --dry-run) DRY_RUN=true; shift ;;
     --json) JSON=true; shift ;;
     --ssh-blackbox-token) [[ $# -ge 2 ]] || die '--ssh-blackbox-token needs a value'; SSH_BLACKBOX_TOKEN=$2; shift 2 ;;
+    --ssh-confirm-timeout) [[ $# -ge 2 ]] || die '--ssh-confirm-timeout needs seconds'; SSH_CONFIRM_TIMEOUT=$2; shift 2 ;;
     --receipt-dir) [[ $# -ge 2 ]] || die '--receipt-dir needs a path'; RECEIPT_DIR=$2; shift 2 ;;
     --version) say "$LVO_VERSION"; exit 0 ;;
     --help|-h) usage; exit 0 ;;
@@ -60,6 +63,7 @@ done
 [[ $HEALTH_TIMER_REQUESTED == preserve || $HEALTH_TIMER_REQUESTED == on || $HEALTH_TIMER_REQUESTED == off ]] || die 'Invalid --health-timer value'
 [[ $JSON == false || $MODE == audit || $MODE == validate || $MODE == health ]] || die '--json is only valid for audit/validate/health'
 [[ -z $SSH_BLACKBOX_TOKEN || $MODE == deploy || $MODE == apply || $MODE == repair ]] || die '--ssh-blackbox-token is only valid for deploy/apply/repair'
+[[ $SSH_CONFIRM_TIMEOUT =~ ^[0-9]+$ ]] && (( SSH_CONFIRM_TIMEOUT >= 15 && SSH_CONFIRM_TIMEOUT <= 600 )) || die 'Invalid --ssh-confirm-timeout value (15-600)'
 require_platform
 profile_resolve
 health_timer_policy_resolve

@@ -21,6 +21,8 @@ LIB_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 . "$LIB_DIR/health.sh"
 # shellcheck source=lib/config.sh
 . "$LIB_DIR/config.sh"
+# shellcheck source=lib/ssh_guard.sh
+. "$LIB_DIR/ssh_guard.sh"
 # shellcheck source=lib/transaction.sh
 . "$LIB_DIR/transaction.sh"
 # shellcheck source=lib/phases.sh

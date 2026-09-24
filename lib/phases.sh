@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 SSH_BLACKBOX_PASSED=false
+SSH_SAFETY_STATUS=not-evaluated
+SSH_GUARD_STATUS=not-required
 PACKAGE_ACTION=none
 SWAP_ACTION=none
 HEALTH_TIMER_POLICY=on
@@ -122,9 +124,15 @@ phase2_audit() {
   else
     add_check 2 ssh_effective FAIL true "password=$pass kbd=$kbd root=$root forwarding=$forward"
   fi
-  if [[ $SSH_BLACKBOX_PASSED == true ]] || grep -Fq '"ssh_blackbox_verified":true' "$(tx_state_dir)/state.json" 2>/dev/null || sudo -n grep -Fq '"ssh_blackbox_verified":true' "$(tx_state_dir)/state.json" 2>/dev/null; then
-    add_check 2 ssh_blackbox PASS true 'controller proof recorded'
-  else add_check 2 ssh_blackbox INCONCLUSIVE true 'no controller proof for v1'; fi
+  local access_state=''
+  access_state=$(state_string_value ssh_safety_status)
+  if [[ $SSH_SAFETY_STATUS == external-confirmed || $access_state == external-confirmed ]] || \
+     grep -Fq '"ssh_blackbox_verified":true' "$(tx_state_dir)/state.json" 2>/dev/null || \
+     sudo -n grep -Fq '"ssh_blackbox_verified":true' "$(tx_state_dir)/state.json" 2>/dev/null; then
+    add_check 2 ssh_reconnect PASS true 'external SSH reconnect proof recorded'
+  else
+    add_check 2 ssh_reconnect PASS true 'SSH desired state is effective; reconnect proof is required only when this run changes SSH'
+  fi
 }
 
 phase3_audit() {
@@ -282,52 +290,68 @@ activate_services() {
 }
 
 ssh_gate_needed() {
-  local file state status
-  file=$(path /etc/ssh/sshd_config.d/60-lite-vps-ops.conf); state=$(tx_state_dir)/state.json
+  local file status
+  file=$(path /etc/ssh/sshd_config.d/60-lite-vps-ops.conf)
   status=$(file_status "$file")
   [[ $status != ALREADY_COMPLIANT ]] && return 0
-  grep -Fq '"ssh_blackbox_verified":true' "$state" 2>/dev/null || return 0
   return 1
 }
 
-apply_ssh_with_blackbox() {
-  local file status gate ready proof attempts=60
+apply_ssh_with_guard() {
+  local file status token
   file=$(path /etc/ssh/sshd_config.d/60-lite-vps-ops.conf)
-  if ! ssh_gate_needed; then SSH_BLACKBOX_PASSED=true; return; fi
-  [[ -n ${SSH_BLACKBOX_TOKEN:-} ]] || die 'SSH phase requires --ssh-blackbox-token and the controller launcher'
-  safe_token "$SSH_BLACKBOX_TOKEN" || die 'Invalid SSH black-box token'
+  if ! ssh_gate_needed; then
+    # shellcheck disable=SC2034 # receipt.sh consumes sourced-module state.
+    SSH_SAFETY_STATUS=unchanged
+    # shellcheck disable=SC2034 # receipt.sh consumes sourced-module state.
+    SSH_GUARD_STATUS=not-required
+    # shellcheck disable=SC2034 # receipt.sh consumes sourced-module state.
+    grep -Fq '"ssh_blackbox_verified":true' "$(tx_state_dir)/state.json" 2>/dev/null && SSH_BLACKBOX_PASSED=true || true
+    printf 'SSH_RECONNECT\tNOT_REQUIRED\n' >> "$TX_DIR/actions.log"
+    return
+  fi
   authorized_keys_guard || die 'SSH authorized_keys guard failed'
   status=$(file_status "$file"); [[ $status == CONFLICT ]] && die "CONFLICT: $file"
   [[ $status == ALREADY_COMPLIANT ]] || atomic_write_managed "$file" 0644
-  if [[ $LVO_TEST_MODE == true ]]; then SSH_BLACKBOX_PASSED=true; return; fi
-  /usr/sbin/sshd -t
-  systemctl reload ssh.service
-  gate=/run/lite-vps-ops; ready="$gate/ssh-$SSH_BLACKBOX_TOKEN.ready"; proof="$gate/ssh-$SSH_BLACKBOX_TOKEN.passed"
-  install -d -m 0700 "$gate"; printf '%s\n' "$SSH_BLACKBOX_TOKEN" > "$ready"; chmod 0600 "$ready"
-  while (( attempts > 0 )); do
-    if [[ -f $proof ]] && grep -Fxq "$SSH_BLACKBOX_TOKEN" "$proof"; then SSH_BLACKBOX_PASSED=true; break; fi
-    sleep 1
-    attempts=$((attempts - 1))
-  done
-  rm -f -- "$ready" "$proof"
-  [[ $SSH_BLACKBOX_PASSED == true ]] || die 'SSH black-box verification timed out'
-  /usr/sbin/sshd -t
-  systemctl is-active --quiet ssh.service
-  printf 'SSH_BLACKBOX\tPASS\n' >> "$TX_DIR/actions.log"
+  if [[ $LVO_TEST_MODE != true ]]; then /usr/sbin/sshd -t; fi
+
+  token=$(ssh_confirmation_token)
+  ssh_guard_prepare "$file" "$token"
+  ssh_guard_arm "$token"
+  if [[ $LVO_TEST_MODE != true ]]; then
+    systemctl reload ssh.service
+    systemctl is-active --quiet ssh.service
+  fi
+
+  say 'SSH configuration changed. A timed automatic rollback guard is active.'
+  say 'Open a SECOND SSH connection from any client, then run this exact command there:'
+  say "  sudo sh -c 'test \"\$(cat $SSH_GUARD_READY)\" = \"$token\" && printf \"%s\\n\" \"$token\" > \"$SSH_GUARD_PROOF\"'"
+  say "Waiting up to ${SSH_CONFIRM_TIMEOUT}s for the second connection; timeout restores the previous SSH configuration."
+  if ssh_guard_wait_for_confirmation "$token"; then
+    if [[ $LVO_TEST_MODE != true ]]; then /usr/sbin/sshd -t; systemctl is-active --quiet ssh.service; fi
+    ssh_guard_confirm "$token"
+  else
+    ssh_guard_restore_now || die 'SSH reconnect verification timed out and automatic rollback failed'
+    ssh_guard_cleanup
+    die 'SSH reconnect verification timed out; the previous SSH configuration was restored'
+  fi
 }
+
+# v1.0/v1.1 Controller compatibility alias. The implementation is now the
+# same instance-local rollback/reconnect gate used by Shell-first deploy.
+apply_ssh_with_blackbox() { apply_ssh_with_guard; }
 
 preflight_write() {
   (( EUID == 0 )) || die 'apply/repair requires root'
+  ssh_guard_prune_stale
   managed_paths_init
   local file status
   for file in "${MANAGED_PATHS[@]}"; do
     status=$(file_status "$file")
     [[ $status == CONFLICT ]] && die "CONFLICT: unowned managed path $file"
   done
-  if ssh_gate_needed; then
-    [[ -n ${SSH_BLACKBOX_TOKEN:-} ]] || die 'No changes made: SSH controller black-box token is required'
-    safe_token "$SSH_BLACKBOX_TOKEN" || die 'Invalid SSH black-box token'
-  fi
+  if ssh_gate_needed; then authorized_keys_guard || die 'No changes made: SSH authorized_keys guard failed'; fi
+  [[ -z ${SSH_BLACKBOX_TOKEN:-} ]] || safe_token "$SSH_BLACKBOX_TOKEN" || die 'Invalid SSH confirmation token'
   if [[ ${MODE:-apply} == repair && ! -f $(tx_state_dir)/state.json ]]; then die 'repair requires existing v1 state'; fi
 }
 
@@ -338,7 +362,7 @@ apply_or_repair() {
   install_dependencies
   apply_managed_configs_except_ssh
   apply_swap
-  apply_ssh_with_blackbox
+  apply_ssh_with_guard
   validate_native_configs
   activate_services
   run_all_checks
@@ -355,7 +379,7 @@ dry_run_plan() {
   local swap_total
   swap_total=$(read_meminfo_kib SwapTotal)
   if (( swap_total > 0 )); then say "ALREADY_COMPLIANT active swap total_kib=$swap_total"; else say "NOT_CONFIGURED emergency swap target=${SWAP_MIB}MiB"; fi
-  if ssh_gate_needed; then say 'INCONCLUSIVE SSH change requires controller black-box token'; else say 'ALREADY_COMPLIANT SSH black-box proof recorded'; fi
+  if ssh_gate_needed; then say 'CHANGE_REQUIRED SSH: timed rollback guard + second SSH connection confirmation'; else say 'ALREADY_COMPLIANT SSH: no reconnect prompt required'; fi
   say "PLAN_CHANGED=$PLAN_CHANGED"
 }
 

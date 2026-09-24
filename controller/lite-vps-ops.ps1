@@ -30,7 +30,7 @@ if ($Command -notin @('deploy', 'apply', 'repair')) {
 $token = ([guid]::NewGuid().ToString('N'))
 $ready = "/run/lite-vps-ops/ssh-$token.ready"
 $proof = "/run/lite-vps-ops/ssh-$token.passed"
-$remote = "$remoteBase --ssh-blackbox-token $token"
+$remote = "$remoteBase --ssh-blackbox-token $token --ssh-confirm-timeout $TimeoutSeconds"
 
 $job = Start-Job -ScriptBlock {
     param($Alias, $RemoteCommand)

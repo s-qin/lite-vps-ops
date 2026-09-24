@@ -7,6 +7,7 @@ bash "$root/tests/resource-envelope.sh"
 bash "$root/tests/migration-timer.sh"
 if command -v pwsh >/dev/null 2>&1; then pwsh -NoProfile -File "$root/tests/ux.ps1"; fi
 bash "$root/tests/integration.sh"
+bash "$root/tests/ssh-guard.sh"
 bash "$root/tests/fault-injection.sh"
 bash "$root/tests/receipt.sh"
 bash "$root/tests/dry-run.sh"
